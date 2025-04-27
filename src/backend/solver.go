@@ -5,17 +5,20 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 )
 
 // Graph: result → list of ingredient pairs
 type Graph map[string][][]string
+
+type InverseGraph map[string]map[string][]string
 
 type Step struct {
 	Ingredients [2]string `json:"ingredients"`
 	Result      string    `json:"result"`
 }
 
-// LoadGraph loads graph from graph_combinations.json
+// LoadGraph loads combinations from JSON file
 func LoadGraph(path string) (Graph, error) {
 	file, err := os.ReadFile(path)
 	if err != nil {
@@ -25,60 +28,131 @@ func LoadGraph(path string) (Graph, error) {
 	err = json.Unmarshal(file, &graph)
 	return graph, err
 }
+func CreateInverseGraph(graph Graph) InverseGraph {
+	inverse := make(InverseGraph)
+	
+	for result, combos := range graph {
+		for _, combo := range combos {
+			a, b := combo[0], combo[1]
+			if _, exists := inverse[a]; !exists {
+				inverse[a] = make(map[string][]string)
+			}
+			inverse[a][b] = append(inverse[a][b], result)
+			if a != b {
+				if _, exists := inverse[b]; !exists {
+					inverse[b] = make(map[string][]string)
+				}
+				inverse[b][a] = append(inverse[b][a], result)
+			}
+		}
+	}
+	
+	return inverse
+}
 
-// BFSRecipe searches for target element using BFS
-func BFSRecipe(graph Graph, start []string, target string) ([]Step, bool) {
+// BFSRecipe finds combination path from starters to target using optimized BFS
+func BFSRecipe(graph Graph, start []string, target string) ([]Step, bool, int) {
+	// Build inverse graph for faster lookups
+	inverse := CreateInverseGraph(graph)
+	
 	type State struct {
 		Available map[string]bool
 		Path      []Step
 	}
 
+	// Initialize queue with starting elements
 	queue := []State{{Available: sliceToSet(start), Path: []Step{}}}
-	visited := map[string]bool{}
+	
+	// Use string hash of available elements as visited key
+	visitedStates := make(map[string]bool, 1000)
+	visitedStates[stateHash(sliceToSet(start))] = true
+	
+	nodesVisited := 0
+
+	// Early check if target is already in starting elements
+	if queue[0].Available[target] {
+		return queue[0].Path, true, nodesVisited
+	}
 
 	for len(queue) > 0 {
 		curr := queue[0]
 		queue = queue[1:]
-
-		if curr.Available[target] {
-			return curr.Path, true
+		nodesVisited++
+		fmt.Printf("Node visited: %d\r", nodesVisited)
+		// if nodesVisited%1000 == 0 {
+		// 	fmt.Printf("Nodes visited: %d, Queue size: %d\r", nodesVisited, len(queue))
+		// }
+		if nodesVisited == 2000000 {
+			fmt.Printf("Shit I'm tired dawg💀💀💀\n")
+			break
 		}
-
 		elements := keys(curr.Available)
-		n := len(elements)
 
-		for i := 0; i < n; i++ {
-			for j := i + 1; j < n; j++ {
-				a, b := elements[i], elements[j]
-
-				for result, combos := range graph {
-					for _, combo := range combos {
-						if isPair(combo, a, b) && !curr.Available[result] {
-							newAvail := copyMap(curr.Available)
-							newAvail[result] = true
-
-							step := Step{Ingredients: [2]string{a, b}, Result: result}
-							newPath := append([]Step{}, curr.Path...)
-							newPath = append(newPath, step)
-
-							key := sortedKey(newAvail)
-							if !visited[key] {
-								visited[key] = true
-								queue = append(queue, State{Available: newAvail, Path: newPath})
-							}
-						}
+		for i, a := range elements {
+			for j := i; j < len(elements); j++ {
+				b := elements[j]
+				
+				var possibleResults []string
+				if pairs, exists := inverse[a]; exists {
+					if results, hasPair := pairs[b]; hasPair {
+						possibleResults = results
+					}
+				}
+				
+				for _, result := range possibleResults {
+					if curr.Available[result] {
+						continue
+					}
+					
+					newAvail := copyMap(curr.Available)
+					newAvail[result] = true
+					
+					isTarget := result == target
+					
+					step := Step{
+						Ingredients: [2]string{a, b},
+						Result:      result,
+					}
+					
+					newPath := make([]Step, len(curr.Path)+1)
+					copy(newPath, curr.Path)
+					newPath[len(curr.Path)] = step
+					
+					if isTarget {
+						return newPath, true, nodesVisited
+					}
+					
+					stateKey := stateHash(newAvail)
+					if !visitedStates[stateKey] {
+						visitedStates[stateKey] = true
+						queue = append(queue, State{
+							Available: newAvail,
+							Path:      newPath,
+						})
 					}
 				}
 			}
 		}
 	}
-	return nil, false
+	
+	return nil, false, nodesVisited
 }
 
-// Util
+func stateHash(available map[string]bool) string {
+	keys := make([]string, 0, len(available))
+	for k := range available {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
+}
+
+//
+// Helper Utilities
+//
 
 func sliceToSet(slice []string) map[string]bool {
-	set := make(map[string]bool)
+	set := make(map[string]bool, len(slice))
 	for _, v := range slice {
 		set[v] = true
 	}
@@ -94,19 +168,9 @@ func keys(m map[string]bool) []string {
 }
 
 func copyMap(m map[string]bool) map[string]bool {
-	newMap := make(map[string]bool)
+	newMap := make(map[string]bool, len(m))
 	for k, v := range m {
 		newMap[k] = v
 	}
 	return newMap
-}
-
-func isPair(pair []string, a, b string) bool {
-	return (pair[0] == a && pair[1] == b) || (pair[0] == b && pair[1] == a)
-}
-
-func sortedKey(m map[string]bool) string {
-	k := keys(m)
-	sort.Strings(k)
-	return fmt.Sprintf("%v", k)
 }
