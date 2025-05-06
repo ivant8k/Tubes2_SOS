@@ -445,3 +445,61 @@ func GetIntermediateElementStats(steps []Step) map[string]int {
 	return stats
 }
 
+// DFSRecipe mencari jalur ke target menggunakan DFS
+func DFSRecipe(graph Graph, start []string, target string, timeout time.Duration) ([]Step, bool, int) {
+	inverse := CreateInverseGraph(graph)
+	startSet := sliceToSet(start)
+	//visited := make(map[string]bool)
+	visitedStates := make(map[string]bool)
+	var resultPath []Step
+	var nodesVisited int
+	startTime := time.Now()
+
+	var dfs func(currentSet map[string]bool, path []Step) bool
+	dfs = func(currentSet map[string]bool, path []Step) bool {
+		if time.Since(startTime) > timeout {
+			return false
+		}
+
+		nodesVisited++
+		if currentSet[target] {
+			resultPath = make([]Step, len(path))
+			copy(resultPath, path)
+			return true
+		}
+
+		stateKey := stateHash(currentSet)
+		if visitedStates[stateKey] {
+			return false
+		}
+		visitedStates[stateKey] = true
+
+		elements := keys(currentSet)
+		for i := 0; i < len(elements); i++ {
+			for j := i; j < len(elements); j++ {
+				a, b := elements[i], elements[j]
+				if results, ok := inverse[a][b]; ok {
+					for _, result := range results {
+						if currentSet[result] {
+							continue
+						}
+						newSet := copyMap(currentSet)
+						newSet[result] = true
+						newPath := append(path, Step{
+							Ingredients: [2]string{a, b},
+							Result:      result,
+						})
+						if dfs(newSet, newPath) {
+							return true
+						}
+					}
+				}
+			}
+		}
+
+		return false
+	}
+
+	found := dfs(startSet, []Step{})
+	return resultPath, found, nodesVisited
+}
