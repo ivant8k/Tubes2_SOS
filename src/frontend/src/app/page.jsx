@@ -20,7 +20,7 @@ export default function Home() {
         {/* Hero Section */}
         <div className="text-center mb-12">
           <h1 className="text-4xl md:text-6xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
-            Element Search Visualization
+            Little Alchemy Recipe Finder
           </h1>
           <p className="text-xl text-gray-300 max-w-2xl mx-auto">
             Visualize how BFS and DFS algorithms search for element combinations in real-time
