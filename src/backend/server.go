@@ -536,6 +536,15 @@ func visualizationHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Max-Age", "86400")
+
+	// Handle preflight request
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 
 	// Create a channel for visualization data
 	visChan := make(chan VisualizationData)
@@ -545,6 +554,21 @@ func visualizationHandler(w http.ResponseWriter, r *http.Request) {
 		graph, err := LoadGraph("combinations.json")
 		if err != nil {
 			log.Printf("Error loading graph: %v", err)
+			// Send error state
+			visChan <- VisualizationData{
+				Nodes: []VisualizationNode{{
+					ID:       "error",
+					Label:    "Error loading graph",
+					Children: make([]string, 0),
+					Parent:   "",
+					Depth:    0,
+				}},
+				Edges: make([]struct {
+					From string `json:"from"`
+					To   string `json:"to"`
+				}, 0),
+			}
+			close(visChan)
 			return
 		}
 
@@ -566,6 +590,30 @@ func visualizationHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Send initial empty state with root node
+	initialData := VisualizationData{
+		Nodes: []VisualizationNode{{
+			ID:       "root",
+			Label:    "Root",
+			Children: make([]string, 0),
+			Parent:   "",
+			Depth:    0,
+		}},
+		Edges: make([]struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		}, 0),
+	}
+	
+	jsonData, err := json.Marshal(initialData)
+	if err != nil {
+		log.Printf("Error marshaling initial data: %v", err)
+		return
+	}
+	fmt.Fprintf(w, "data: %s\n\n", jsonData)
+	flusher.Flush()
+
+	// Stream data from channel
 	for data := range visChan {
 		jsonData, err := json.Marshal(data)
 		if err != nil {
@@ -574,8 +622,11 @@ func visualizationHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprintf(w, "data: %s\n\n", jsonData)
 		flusher.Flush()
-		time.Sleep(100 * time.Millisecond) // Add delay for visualization
 	}
+
+	// Send end event
+	fmt.Fprintf(w, "event: end\ndata: {}\n\n")
+	flusher.Flush()
 }
 
 func BFSRecipeWithVisualization(graph Graph, start []string, target string, timeout time.Duration, visChan chan VisualizationData) ([]Step, bool, int) {
@@ -790,21 +841,31 @@ func DFSRecipeWithVisualization(graph Graph, start []string, target string, time
 }
 
 func sendVisualizationData(visChan chan VisualizationData, queue []State, currentState State) {
-	var data VisualizationData
+	// Initialize data structure with empty arrays
+	data := VisualizationData{
+		Nodes: make([]VisualizationNode, 0),
+		Edges: make([]struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		}, 0),
+	}
 	
 	// Add all nodes from queue
 	for _, state := range queue {
 		// Get the last element created in this state's path
-		label := "root"
+		label := "Root"
 		if len(state.Path) > 0 {
 			lastStep := state.Path[len(state.Path)-1]
-			label = fmt.Sprintf("%s + %s = %s", lastStep.Ingredients[0], lastStep.Ingredients[1], lastStep.Result)
+			label = fmt.Sprintf("%s + %s\n= %s", 
+				lastStep.Ingredients[0], 
+				lastStep.Ingredients[1], 
+				lastStep.Result)
 		}
 		
 		node := VisualizationNode{
 			ID:       state.ID,
 			Label:    label,
-			Children: []string{},
+			Children: make([]string, 0),
 			Parent:   state.ParentID,
 			Depth:    state.Depth,
 		}
@@ -823,16 +884,19 @@ func sendVisualizationData(visChan chan VisualizationData, queue []State, curren
 	
 	// Add current state being visited
 	if currentState.ID != "" {
-		label := "root"
+		label := "Root"
 		if len(currentState.Path) > 0 {
 			lastStep := currentState.Path[len(currentState.Path)-1]
-			label = fmt.Sprintf("%s + %s = %s", lastStep.Ingredients[0], lastStep.Ingredients[1], lastStep.Result)
+			label = fmt.Sprintf("%s + %s\n= %s", 
+				lastStep.Ingredients[0], 
+				lastStep.Ingredients[1], 
+				lastStep.Result)
 		}
 		
 		node := VisualizationNode{
 			ID:       currentState.ID,
 			Label:    label,
-			Children: []string{},
+			Children: make([]string, 0),
 			Parent:   currentState.ParentID,
 			Depth:    currentState.Depth,
 		}
@@ -848,6 +912,19 @@ func sendVisualizationData(visChan chan VisualizationData, queue []State, curren
 			})
 		}
 	}
+
+	// Ensure we always have at least one node (the root)
+	if len(data.Nodes) == 0 {
+		data.Nodes = append(data.Nodes, VisualizationNode{
+			ID:       "root",
+			Label:    "Root",
+			Parent:   "",
+			Depth:    0,
+		})
+	}
+
+	// Log the data being sent
+	log.Printf("Sending visualization data: %+v", data)
 	
 	// Send data
 	visChan <- data
