@@ -6,36 +6,35 @@ import * as d3 from 'd3';
 // Helper to build a d3 hierarchy from the solutionPath
 function buildTreeFromPath(solutionPath) {
   if (!solutionPath || solutionPath.length === 0) return null;
-  // Build a tree where each step's result is a node, and its ingredients are children
-  // We'll use a map to avoid duplicate nodes
-  const nodeMap = new Map();
+  // We'll use a map only for result nodes, not for ingredients
+  const resultNodeMap = new Map();
 
-  // First, create all nodes
+  // First, create all result nodes
   solutionPath.forEach((step) => {
-    if (!nodeMap.has(step.result)) {
-      nodeMap.set(step.result, { name: step.result, children: [] });
+    if (!resultNodeMap.has(step.result)) {
+      resultNodeMap.set(step.result, { name: step.result, children: [] });
     }
-    step.ingredients.forEach((ingredient) => {
-      if (!nodeMap.has(ingredient)) {
-        nodeMap.set(ingredient, { name: ingredient, children: [] });
-      }
-    });
   });
 
-  // Then, link children
+  // Then, link children (ingredients are always new nodes)
   solutionPath.forEach((step) => {
-    const resultNode = nodeMap.get(step.result);
-    step.ingredients.forEach((ingredient) => {
-      const ingredientNode = nodeMap.get(ingredient);
-      // Only add as child if not already present
-      if (!resultNode.children.includes(ingredientNode)) {
-        resultNode.children.push(ingredientNode);
+    const resultNode = resultNodeMap.get(step.result);
+    step.ingredients.forEach((ingredient, i) => {
+      // If both ingredients are the same, create two separate nodes
+      let ingredientName = ingredient;
+      if (step.ingredients[0] === step.ingredients[1]) {
+        ingredientName = `${ingredient} (${i + 1})`;
       }
+      // If this ingredient is also a result in another step, link to that node
+      const ingredientNode = resultNodeMap.has(ingredient)
+        ? resultNodeMap.get(ingredient)
+        : { name: ingredientName, children: [] };
+      resultNode.children.push(ingredientNode);
     });
   });
 
   // The last step's result is the root
-  const root = nodeMap.get(solutionPath[solutionPath.length - 1].result);
+  const root = resultNodeMap.get(solutionPath[solutionPath.length - 1].result);
   return d3.hierarchy(root);
 }
 
