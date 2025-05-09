@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"time"
-	"littlealchemy-scraper/backend"
+	"littlealchemy/backend"
 )
 
 func main() {

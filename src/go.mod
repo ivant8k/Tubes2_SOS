@@ -1,4 +1,4 @@
-module littlealchemy-scraper
+module littlealchemy
 
 go 1.24.2
 

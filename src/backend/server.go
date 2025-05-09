@@ -1,5 +1,4 @@
-package main
-
+package backend
 import (
 	"encoding/json"
 	"fmt"
@@ -10,25 +9,19 @@ import (
 	"strings"
 	"time"
 )
-
 type SearchRequest struct {
 	Element string `json:"element"`
 	Mode    string `json:"mode"`
 }
-
 type SearchResponse struct {
 	Path  []Step `json:"path"`
 	Found bool   `json:"found"`
 	Steps int    `json:"steps"`
 }
-
-// Step merepresentasikan satu langkah kombinasi
 type Step struct {
 	Ingredients [2]string `json:"ingredients"`
 	Result      string    `json:"result"`
 }
-
-// State represents a search state with available elements and path
 type State struct {
 	Available map[string]bool
 	Path      []Step
@@ -36,14 +29,8 @@ type State struct {
 	ID        string
 	ParentID  string
 }
-
-// Graph: result → list of ingredient pairs
 type Graph map[string][][]string
-
-// InverseGraph: ingredient → ingredient → list of results
 type InverseGraph map[string]map[string][]string
-
-// LoadGraph memuat kombinasi dari file JSON
 func LoadGraph(path string) (Graph, error) {
 	file, err := os.ReadFile(path)
 	if err != nil {
@@ -54,10 +41,8 @@ func LoadGraph(path string) (Graph, error) {
 	return graph, err
 }
 
-// CreateInverseGraph membuat graph kebalikan untuk pencarian lebih cepat
 func CreateInverseGraph(graph Graph) InverseGraph {
 	inverse := make(InverseGraph)
-	
 	for result, combos := range graph {
 		for _, combo := range combos {
 			a, b := combo[0], combo[1]
@@ -73,40 +58,25 @@ func CreateInverseGraph(graph Graph) InverseGraph {
 			}
 		}
 	}
-	
 	return inverse
 }
 
-// BFSRecipe menemukan jalur kombinasi dari elemen awal ke target menggunakan BFS
 func BFSRecipe(graph Graph, start []string, target string, timeout time.Duration) ([]Step, bool, int) {
 	log.Printf("BFS: Starting search for target: %s", target)
 	inverse := CreateInverseGraph(graph)
-	
-	// Initialize forward search with a fixed-size queue
-	queueSize := 10000 // Limit queue size to prevent memory issues
+	queueSize := 10000 
 	forwardQueue := make([]State, 0, queueSize)
 	forwardQueue = append(forwardQueue, State{Available: sliceToSet(start), Path: []Step{}, Depth: 0})
-	
-	// Use a more efficient visited state tracking
 	visitedStates := make(map[string]struct{})
 	visitedStates[stateHash(sliceToSet(start))] = struct{}{}
-	
 	nodesVisited := 0
 	startTime := time.Now()
-	
-	// Check if target is already available
 	if forwardQueue[0].Available[target] {
 		log.Printf("BFS: Target %s is already available in start elements", target)
 		return []Step{}, true, 1
 	}
-
-	// Maximum depth limit
-	maxDepth := 7 // Increased slightly to ensure we can find solutions
-	
-	// Track elements that can lead to target
+	maxDepth := 7 
 	canLeadToTarget := make(map[string]bool)
-	
-	// Pre-compute elements that can lead to target
 	for result, combos := range graph {
 		if result == target {
 			for _, combo := range combos {
@@ -115,8 +85,6 @@ func BFSRecipe(graph Graph, start []string, target string, timeout time.Duration
 			}
 		}
 	}
-	
-	// Track intermediate elements that can lead to target
 	intermediateElements := make(map[string]bool)
 	for result, combos := range graph {
 		for _, combo := range combos {
@@ -126,60 +94,40 @@ func BFSRecipe(graph Graph, start []string, target string, timeout time.Duration
 			}
 		}
 	}
-	
-	// Main search loop
 	for len(forwardQueue) > 0 {
 		if time.Since(startTime) > timeout {
 			log.Printf("BFS: Search timed out after visiting %d nodes", nodesVisited)
 			return nil, false, nodesVisited
 		}
-		
-		// Process current state
 		current := forwardQueue[0]
 		forwardQueue = forwardQueue[1:]
 		nodesVisited++
-		
 		if nodesVisited%1000 == 0 {
 			log.Printf("BFS: Visited %d nodes, queue size: %d, current depth: %d", nodesVisited, len(forwardQueue), current.Depth)
 		}
-
-		// Skip if we've reached max depth
 		if current.Depth >= maxDepth {
 			continue
 		}
-		
-		// Get available elements and sort them
 		available := make([]string, 0, len(current.Available))
 		for elem := range current.Available {
 			available = append(available, elem)
 		}
-		
-		// Sort available elements to prioritize those that can lead to target
 		sort.Slice(available, func(i, j int) bool {
 			iCanLead := canLeadToTarget[available[i]] || intermediateElements[available[i]]
 			jCanLead := canLeadToTarget[available[j]] || intermediateElements[available[j]]
 			return iCanLead && !jCanLead
 		})
-		
-		// Try combinations
 		for i := 0; i < len(available); i++ {
 			a := available[i]
-			
-			// Skip if element can't lead to target and we're not at depth 0
 			if !canLeadToTarget[a] && !intermediateElements[a] && current.Depth > 0 {
 				continue
 			}
-			
 			for j := i; j < len(available); j++ {
 				b := available[j]
-				
-				// Skip if neither element can lead to target
 				if !canLeadToTarget[a] && !intermediateElements[a] && 
 				   !canLeadToTarget[b] && !intermediateElements[b] {
 					continue
 				}
-				
-				// Check if combination exists
 				if _, exists := inverse[a]; !exists {
 					continue
 				}
@@ -187,7 +135,6 @@ func BFSRecipe(graph Graph, start []string, target string, timeout time.Duration
 				if !exists {
 					continue
 				}
-				
 				for _, result := range results {
 					if result == target {
 						log.Printf("BFS: Found target %s after visiting %d nodes", target, nodesVisited)
@@ -199,16 +146,12 @@ func BFSRecipe(graph Graph, start []string, target string, timeout time.Duration
 						})
 						return newPath, true, nodesVisited
 					}
-					
 					if !current.Available[result] {
 						newAvailable := copyMap(current.Available)
 						newAvailable[result] = true
-						
 						stateKey := stateHash(newAvailable)
 						if _, visited := visitedStates[stateKey]; !visited {
 							visitedStates[stateKey] = struct{}{}
-							
-							// Only add to queue if we haven't reached the size limit
 							if len(forwardQueue) < queueSize {
 								newPath := make([]Step, len(current.Path))
 								copy(newPath, current.Path)
@@ -228,56 +171,41 @@ func BFSRecipe(graph Graph, start []string, target string, timeout time.Duration
 			}
 		}
 	}
-	
 	log.Printf("BFS: Target %s not found after visiting %d nodes", target, nodesVisited)
 	return nil, false, nodesVisited
 }
 
-// DFSRecipe menemukan jalur kombinasi dari elemen awal ke target menggunakan DFS
 func DFSRecipe(graph Graph, start []string, target string, timeout time.Duration) ([]Step, bool, int) {
 	log.Printf("DFS: Starting search for target: %s", target)
 	inverse := CreateInverseGraph(graph)
-	
 	stack := []State{{Available: sliceToSet(start), Path: []Step{}, Depth: 0}}
 	visitedStates := make(map[string]struct{})
 	visitedStates[stateHash(sliceToSet(start))] = struct{}{}
-	
 	nodesVisited := 0
 	startTime := time.Now()
-	
 	if stack[0].Available[target] {
 		log.Printf("DFS: Target %s is already available in start elements", target)
 		return []Step{}, true, 1
 	}
-
-	// Maximum depth limit to prevent excessive searching
 	maxDepth := 10
-	
 	for len(stack) > 0 {
 		if time.Since(startTime) > timeout {
 			log.Printf("DFS: Search timed out after visiting %d nodes", nodesVisited)
 			return nil, false, nodesVisited
 		}
-		
 		current := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		nodesVisited++
-		
 		if nodesVisited%1000 == 0 {
 			log.Printf("DFS: Visited %d nodes, stack size: %d, current depth: %d", nodesVisited, len(stack), current.Depth)
 		}
-
-		// Skip if we've reached max depth
 		if current.Depth >= maxDepth {
 			continue
 		}
-		
 		available := keys(current.Available)
 		for i := 0; i < len(available); i++ {
 			for j := i; j < len(available); j++ {
 				a, b := available[i], available[j]
-				
-				// Check if combination exists
 				if _, exists := inverse[a]; !exists {
 					continue
 				}
@@ -285,7 +213,6 @@ func DFSRecipe(graph Graph, start []string, target string, timeout time.Duration
 				if !exists {
 					continue
 				}
-				
 				for _, result := range results {
 					if result == target {
 						log.Printf("DFS: Found target %s after visiting %d nodes", target, nodesVisited)
@@ -297,11 +224,9 @@ func DFSRecipe(graph Graph, start []string, target string, timeout time.Duration
 						})
 						return newPath, true, nodesVisited
 					}
-					
 					if !current.Available[result] {
 						newAvailable := copyMap(current.Available)
 						newAvailable[result] = true
-						
 						stateKey := stateHash(newAvailable)
 						if _, visited := visitedStates[stateKey]; !visited {
 							visitedStates[stateKey] = struct{}{}
@@ -322,7 +247,6 @@ func DFSRecipe(graph Graph, start []string, target string, timeout time.Duration
 			}
 		}
 	}
-	
 	log.Printf("DFS: Target %s not found after visiting %d nodes", target, nodesVisited)
 	return nil, false, nodesVisited
 }
@@ -361,54 +285,39 @@ func copyMap(m map[string]bool) map[string]bool {
 
 func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Allow requests from any origin during development
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
-
+		w.Header().Set("Access-Control-Max-Age", "86400") 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-
 		next(w, r)
 	}
 }
 
 func searchHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Received request: %s %s", r.Method, r.URL.String())
-	
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	element := strings.ToLower(r.URL.Query().Get("element"))
 	mode := strings.ToLower(r.URL.Query().Get("mode"))
-
 	log.Printf("Searching for element: %s with mode: %s", element, mode)
-
 	if element == "" {
 		http.Error(w, "Element parameter is required", http.StatusBadRequest)
 		return
 	}
-
-	// Load the graph
 	graph, err := LoadGraph("combinations.json")
 	if err != nil {
 		log.Printf("Error loading graph: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
-
-	// Log graph statistics
 	log.Printf("Graph loaded with %d elements", len(graph))
-
-	// Create inverse graph for checking
 	inverse := CreateInverseGraph(graph)
-
-	// Check if element is a base element
 	isBaseElement := false
 	for _, base := range []string{"air", "earth", "fire", "water"} {
 		if element == base {
@@ -416,11 +325,8 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-
-	// Check if element exists in graph or can be created
 	elementExists := isBaseElement || graph[element] != nil
 	if !elementExists {
-		// Check if element can be created from other combinations
 		for _, combos := range inverse {
 			for _, results := range combos {
 				for _, result := range results {
@@ -438,7 +344,6 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-
 	if !elementExists {
 		log.Printf("Element %s not found in graph and cannot be created", element)
 		response := SearchResponse{
@@ -450,8 +355,6 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(response)
 		return
 	}
-
-	// Log element information
 	if isBaseElement {
 		log.Printf("Element %s is a base element", element)
 	} else if combos, exists := graph[element]; exists {
@@ -462,19 +365,12 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		log.Printf("Element %s can be created from other combinations", element)
 	}
-
-	// Define base elements
 	baseElements := []string{"air", "earth", "fire", "water"}
 	log.Printf("Starting with base elements: %v", baseElements)
-
 	var steps []Step
 	var found bool
 	var nodesVisited int
-
-	// Set timeout for search - increased to 60 seconds
 	timeout := 60 * time.Second
-
-	// Perform search based on mode
 	if mode == "dfs" {
 		log.Printf("Starting DFS search for element: %s", element)
 		steps, found, nodesVisited = DFSRecipe(graph, baseElements, element, timeout)
@@ -482,7 +378,6 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Starting BFS search for element: %s", element)
 		steps, found, nodesVisited = BFSRecipe(graph, baseElements, element, timeout)
 	}
-
 	log.Printf("Search completed. Found: %v, Steps: %d", found, nodesVisited)
 	if found {
 		log.Printf("Path length: %d", len(steps))
@@ -490,13 +385,11 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Step %d: %s + %s = %s", i+1, step.Ingredients[0], step.Ingredients[1], step.Result)
 		}
 	}
-
 	response := SearchResponse{
 		Path:  steps,
 		Found: found,
 		Steps: nodesVisited,
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
@@ -522,16 +415,12 @@ func visualizationHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	element := strings.ToLower(r.URL.Query().Get("element"))
 	mode := strings.ToLower(r.URL.Query().Get("mode"))
-
 	if element == "" {
 		http.Error(w, "Element parameter is required", http.StatusBadRequest)
 		return
 	}
-
-	// Set headers for SSE
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -539,22 +428,15 @@ func visualizationHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	w.Header().Set("Access-Control-Max-Age", "86400")
-
-	// Handle preflight request
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-
-	// Create a channel for visualization data
 	visChan := make(chan VisualizationData)
-	
-	// Start search in a goroutine
 	go func() {
 		graph, err := LoadGraph("combinations.json")
 		if err != nil {
 			log.Printf("Error loading graph: %v", err)
-			// Send error state
 			visChan <- VisualizationData{
 				Nodes: []VisualizationNode{{
 					ID:       "error",
@@ -571,10 +453,8 @@ func visualizationHandler(w http.ResponseWriter, r *http.Request) {
 			close(visChan)
 			return
 		}
-
 		baseElements := []string{"air", "earth", "fire", "water"}
 		timeout := 60 * time.Second
-
 		if mode == "dfs" {
 			DFSRecipeWithVisualization(graph, baseElements, element, timeout, visChan)
 		} else {
@@ -582,15 +462,11 @@ func visualizationHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		close(visChan)
 	}()
-
-	// Stream visualization data
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-
-	// Send initial empty state with root node
 	initialData := VisualizationData{
 		Nodes: []VisualizationNode{{
 			ID:       "root",
@@ -604,7 +480,6 @@ func visualizationHandler(w http.ResponseWriter, r *http.Request) {
 			To   string `json:"to"`
 		}, 0),
 	}
-	
 	jsonData, err := json.Marshal(initialData)
 	if err != nil {
 		log.Printf("Error marshaling initial data: %v", err)
@@ -612,8 +487,6 @@ func visualizationHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Fprintf(w, "data: %s\n\n", jsonData)
 	flusher.Flush()
-
-	// Stream data from channel
 	for data := range visChan {
 		jsonData, err := json.Marshal(data)
 		if err != nil {
@@ -623,15 +496,12 @@ func visualizationHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "data: %s\n\n", jsonData)
 		flusher.Flush()
 	}
-
-	// Send end event
 	fmt.Fprintf(w, "event: end\ndata: {}\n\n")
 	flusher.Flush()
 }
 
 func BFSRecipeWithVisualization(graph Graph, start []string, target string, timeout time.Duration, visChan chan VisualizationData) ([]Step, bool, int) {
 	inverse := CreateInverseGraph(graph)
-	
 	queueSize := 10000
 	forwardQueue := make([]State, 0, queueSize)
 	initialState := State{
@@ -642,48 +512,35 @@ func BFSRecipeWithVisualization(graph Graph, start []string, target string, time
 		ParentID:  "",
 	}
 	forwardQueue = append(forwardQueue, initialState)
-	
 	visitedStates := make(map[string]struct{})
 	visitedStates[stateHash(sliceToSet(start))] = struct{}{}
-	
 	nodesVisited := 0
 	startTime := time.Now()
 	maxDepth := 7
-
-	// Send initial state
 	sendVisualizationData(visChan, []State{initialState}, State{})
-
 	if initialState.Available[target] {
 		return []Step{}, true, 1
 	}
-
 	for len(forwardQueue) > 0 {
 		if time.Since(startTime) > timeout {
 			return nil, false, nodesVisited
 		}
-
 		current := forwardQueue[0]
 		forwardQueue = forwardQueue[1:]
 		nodesVisited++
-
-		// Send visualization data for current node being visited
 		sendVisualizationData(visChan, forwardQueue, current)
-		time.Sleep(500 * time.Millisecond) // Add delay to show node being visited
-
+		time.Sleep(500 * time.Millisecond) 
 		if current.Depth >= maxDepth {
 			continue
 		}
-
 		available := make([]string, 0, len(current.Available))
 		for elem := range current.Available {
 			available = append(available, elem)
 		}
-
 		for i := 0; i < len(available); i++ {
 			a := available[i]
 			for j := i; j < len(available); j++ {
 				b := available[j]
-
 				if _, exists := inverse[a]; !exists {
 					continue
 				}
@@ -691,7 +548,6 @@ func BFSRecipeWithVisualization(graph Graph, start []string, target string, time
 				if !exists {
 					continue
 				}
-
 				for _, result := range results {
 					if result == target {
 						newPath := make([]Step, len(current.Path))
@@ -702,15 +558,12 @@ func BFSRecipeWithVisualization(graph Graph, start []string, target string, time
 						})
 						return newPath, true, nodesVisited
 					}
-
 					if !current.Available[result] {
 						newAvailable := copyMap(current.Available)
 						newAvailable[result] = true
-
 						stateKey := stateHash(newAvailable)
 						if _, visited := visitedStates[stateKey]; !visited {
 							visitedStates[stateKey] = struct{}{}
-
 							if len(forwardQueue) < queueSize {
 								newState := State{
 									Available: newAvailable,
@@ -731,13 +584,11 @@ func BFSRecipeWithVisualization(graph Graph, start []string, target string, time
 			}
 		}
 	}
-
 	return nil, false, nodesVisited
 }
 
 func DFSRecipeWithVisualization(graph Graph, start []string, target string, timeout time.Duration, visChan chan VisualizationData) ([]Step, bool, int) {
 	inverse := CreateInverseGraph(graph)
-	
 	stack := make([]State, 0, 10000)
 	initialState := State{
 		Available: sliceToSet(start),
@@ -747,48 +598,35 @@ func DFSRecipeWithVisualization(graph Graph, start []string, target string, time
 		ParentID:  "",
 	}
 	stack = append(stack, initialState)
-	
 	visitedStates := make(map[string]struct{})
 	visitedStates[stateHash(sliceToSet(start))] = struct{}{}
-	
 	nodesVisited := 0
 	startTime := time.Now()
 	maxDepth := 7
-
-	// Send initial state
 	sendVisualizationData(visChan, []State{initialState}, State{})
-
 	if initialState.Available[target] {
 		return []Step{}, true, 1
 	}
-
 	for len(stack) > 0 {
 		if time.Since(startTime) > timeout {
 			return nil, false, nodesVisited
 		}
-
 		current := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		nodesVisited++
-
-		// Send visualization data for current node being visited
 		sendVisualizationData(visChan, stack, current)
-		time.Sleep(500 * time.Millisecond) // Add delay to show node being visited
-
+		time.Sleep(500 * time.Millisecond) 
 		if current.Depth >= maxDepth {
 			continue
 		}
-
 		available := make([]string, 0, len(current.Available))
 		for elem := range current.Available {
 			available = append(available, elem)
 		}
-
 		for i := 0; i < len(available); i++ {
 			a := available[i]
 			for j := i; j < len(available); j++ {
 				b := available[j]
-
 				if _, exists := inverse[a]; !exists {
 					continue
 				}
@@ -796,7 +634,6 @@ func DFSRecipeWithVisualization(graph Graph, start []string, target string, time
 				if !exists {
 					continue
 				}
-
 				for _, result := range results {
 					if result == target {
 						newPath := make([]Step, len(current.Path))
@@ -807,15 +644,12 @@ func DFSRecipeWithVisualization(graph Graph, start []string, target string, time
 						})
 						return newPath, true, nodesVisited
 					}
-
 					if !current.Available[result] {
 						newAvailable := copyMap(current.Available)
 						newAvailable[result] = true
-
 						stateKey := stateHash(newAvailable)
 						if _, visited := visitedStates[stateKey]; !visited {
 							visitedStates[stateKey] = struct{}{}
-
 							if len(stack) < 10000 {
 								newState := State{
 									Available: newAvailable,
@@ -836,12 +670,10 @@ func DFSRecipeWithVisualization(graph Graph, start []string, target string, time
 			}
 		}
 	}
-
 	return nil, false, nodesVisited
 }
 
 func sendVisualizationData(visChan chan VisualizationData, queue []State, currentState State) {
-	// Initialize data structure with empty arrays
 	data := VisualizationData{
 		Nodes: make([]VisualizationNode, 0),
 		Edges: make([]struct {
@@ -849,10 +681,7 @@ func sendVisualizationData(visChan chan VisualizationData, queue []State, curren
 			To   string `json:"to"`
 		}, 0),
 	}
-	
-	// Add all nodes from queue
 	for _, state := range queue {
-		// Get the last element created in this state's path
 		label := "Root"
 		if len(state.Path) > 0 {
 			lastStep := state.Path[len(state.Path)-1]
@@ -861,7 +690,6 @@ func sendVisualizationData(visChan chan VisualizationData, queue []State, curren
 				lastStep.Ingredients[1], 
 				lastStep.Result)
 		}
-		
 		node := VisualizationNode{
 			ID:       state.ID,
 			Label:    label,
@@ -870,7 +698,6 @@ func sendVisualizationData(visChan chan VisualizationData, queue []State, curren
 			Depth:    state.Depth,
 		}
 		data.Nodes = append(data.Nodes, node)
-		
 		if state.ParentID != "" {
 			data.Edges = append(data.Edges, struct {
 				From string `json:"from"`
@@ -881,8 +708,6 @@ func sendVisualizationData(visChan chan VisualizationData, queue []State, curren
 			})
 		}
 	}
-	
-	// Add current state being visited
 	if currentState.ID != "" {
 		label := "Root"
 		if len(currentState.Path) > 0 {
@@ -892,7 +717,6 @@ func sendVisualizationData(visChan chan VisualizationData, queue []State, curren
 				lastStep.Ingredients[1], 
 				lastStep.Result)
 		}
-		
 		node := VisualizationNode{
 			ID:       currentState.ID,
 			Label:    label,
@@ -901,7 +725,6 @@ func sendVisualizationData(visChan chan VisualizationData, queue []State, curren
 			Depth:    currentState.Depth,
 		}
 		data.Nodes = append(data.Nodes, node)
-		
 		if currentState.ParentID != "" {
 			data.Edges = append(data.Edges, struct {
 				From string `json:"from"`
@@ -912,8 +735,6 @@ func sendVisualizationData(visChan chan VisualizationData, queue []State, curren
 			})
 		}
 	}
-
-	// Ensure we always have at least one node (the root)
 	if len(data.Nodes) == 0 {
 		data.Nodes = append(data.Nodes, VisualizationNode{
 			ID:       "root",
@@ -922,21 +743,15 @@ func sendVisualizationData(visChan chan VisualizationData, queue []State, curren
 			Depth:    0,
 		})
 	}
-
-	// Log the data being sent
 	log.Printf("Sending visualization data: %+v", data)
-	
-	// Send data
 	visChan <- data
 }
 
 func main() {
 	log.Println("Starting server...")
 	log.Println("Server will listen on :5000")
-	
 	http.HandleFunc("/search", enableCORS(searchHandler))
 	http.HandleFunc("/visualize", enableCORS(visualizationHandler))
-
 	if err := http.ListenAndServe(":5000", nil); err != nil {
 		log.Fatal("Server failed to start:", err)
 	}
