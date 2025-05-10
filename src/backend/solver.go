@@ -136,53 +136,77 @@ func FindRecipeDFS(target string, visited map[string]bool) *Node {
 }
 
 func FindMultipleRecipes(target string, maxCount int) []*Node {
-    var results []*Node
-    var mu sync.Mutex
-    var wg sync.WaitGroup
-    semaphore := make(chan struct{}, 10) 
-    MultiVisitedCount = 0
-    if isBasic(target) {
-        return []*Node{{Element: target}}
-    }
-    validCombos := make([]Combination, 0)
-    for _, comb := range combinations[target] {
-        if tierMap[comb.Left] < tierMap[comb.Root] && tierMap[comb.Right] < tierMap[comb.Root] {
-            validCombos = append(validCombos, comb)
-        }
-    }
-    for _, comb := range validCombos {
-        if len(results) >= maxCount {
-            break
-        }
-        wg.Add(1)
-        semaphore <- struct{}{}
-        go func(c Combination) {
-            defer wg.Done()
-            defer func() { <-semaphore }()
-            visited := make(map[string]bool)
-            left := countAndTrackDFS(c.Left, visited)
-            if left == nil {
-                return
-            }
-            right := countAndTrackDFS(c.Right, visited)
-            if right == nil {
-                return
-            }
-            tree := &Node{
-                Element: c.Root,
-                Left:    left,
-                Right:   right,
-            }
-            mu.Lock()
-            if len(results) < maxCount {
-                results = append(results, tree)
-            }
-            mu.Unlock()
-        }(comb)
-    }
-    wg.Wait()
-    return results
+	var results []*Node
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	var seen = make(map[string]bool)
+	semaphore := make(chan struct{}, 10) // batasi maksimal 10 goroutine aktif
+	MultiVisitedCount = 0
+
+	if isBasic(target) {
+		return []*Node{{Element: target}}
+	}
+
+	validCombos := make([]Combination, 0)
+	for _, comb := range combinations[target] {
+		if tierMap[comb.Left] < tierMap[comb.Root] && tierMap[comb.Right] < tierMap[comb.Root] {
+			validCombos = append(validCombos, comb)
+		}
+	}
+
+	for _, comb := range validCombos {
+		wg.Add(1)
+		semaphore <- struct{}{}
+
+		go func(c Combination) {
+			defer wg.Done()
+			defer func() { <-semaphore }()
+
+			visited := make(map[string]bool)
+			left := countAndTrackDFS(c.Left, visited)
+			if left == nil {
+				return
+			}
+			right := countAndTrackDFS(c.Right, visited)
+			if right == nil {
+				return
+			}
+
+			tree := &Node{
+				Element: c.Root,
+				Left:    left,
+				Right:   right,
+			}
+			recipeSignature := serializeTree(tree)
+
+			mu.Lock()
+			defer mu.Unlock()
+			if !seen[recipeSignature] && len(results) < maxCount {
+				results = append(results, tree)
+				seen[recipeSignature] = true
+			}
+		}(comb)
+
+		// opsional: early break jika sudah cukup
+		mu.Lock()
+		if len(results) >= maxCount {
+			mu.Unlock()
+			break
+		}
+		mu.Unlock()
+	}
+
+	wg.Wait()
+	return results
 }
+
+func serializeTree(n *Node) string {
+	if n == nil {
+		return ""
+	}
+	return n.Element + "(" + serializeTree(n.Left) + "," + serializeTree(n.Right) + ")"
+}
+
 
 func countAndTrackDFS(target string, visited map[string]bool) *Node {
     if isBasic(target) {
