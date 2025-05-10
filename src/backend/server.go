@@ -1,758 +1,643 @@
-package backend
+package main
+
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
-	"time"
+	"sync"
 )
-type SearchRequest struct {
-	Element string `json:"element"`
-	Mode    string `json:"mode"`
+
+type Combination struct {
+	Root  string `json:"root"`
+	Left  string `json:"left"`
+	Right string `json:"right"`
+	Tier  string `json:"tier"`
 }
+
+type Node struct {
+	Element string
+	Left    *Node
+	Right   *Node
+}
+
 type SearchResponse struct {
-	Path  []Step `json:"path"`
-	Found bool   `json:"found"`
-	Steps int    `json:"steps"`
+	Found bool     `json:"found"`
+	Steps int      `json:"steps"`
+	Paths [][]Step `json:"paths"`
 }
+
 type Step struct {
-	Ingredients [2]string `json:"ingredients"`
-	Result      string    `json:"result"`
+	Ingredients []string `json:"ingredients"`
+	Result      string   `json:"result"`
 }
-type State struct {
-	Available map[string]bool
-	Path      []Step
-	Depth     int
-	ID        string
-	ParentID  string
-}
-type Graph map[string][][]string
-type InverseGraph map[string]map[string][]string
-func LoadGraph(path string) (Graph, error) {
-	file, err := os.ReadFile(path)
+
+var combinations map[string][]Combination
+var tierMap map[string]int
+var BFSVisitedCount int
+var MultiVisitedCount int
+var DFSVisitedCount int
+
+func LoadCombinations(filename string) error {
+	log.Printf("Loading combinations from %s", filename)
+	
+	data, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, err
+		log.Printf("Error reading file: %v", err)
+		return err
 	}
-	var graph Graph
-	err = json.Unmarshal(file, &graph)
-	return graph, err
+	
+	var raw []Combination
+	if err := json.Unmarshal(data, &raw); err != nil {
+		log.Printf("Error unmarshaling JSON: %v", err)
+		return err
+	}
+	
+	log.Printf("Successfully loaded %d combinations", len(raw))
+	
+	combinations = make(map[string][]Combination)
+	tierMap = make(map[string]int)
+	
+	for _, c := range raw {
+		// Convert tier from string to int
+		tier, err := strconv.Atoi(c.Tier)
+		if err != nil {
+			log.Printf("Warning: Invalid tier value for %s: %s", c.Root, c.Tier)
+			tier = 0
+		}
+		
+		// Store the combination
+		combinations[c.Root] = append(combinations[c.Root], c)
+		tierMap[c.Root] = tier
+		
+		// Debug: Log some combinations to verify loading
+		if c.Root == "Lava" || c.Root == "lava" {
+			log.Printf("Loaded Lava combination: %s = %s + %s (tier: %d)", 
+				c.Root, c.Left, c.Right, tier)
+		}
+	}
+	
+	// Debug: Print some statistics
+	log.Printf("Loaded combinations for %d unique elements", len(combinations))
+	
+	// Debug: Check if Lava exists in combinations
+	if combos, exists := combinations["Lava"]; exists {
+		log.Printf("Found %d combinations for Lava", len(combos))
+		for _, c := range combos {
+			log.Printf("Lava combination: %s = %s + %s (tier: %d)", 
+				c.Root, c.Left, c.Right, tierMap[c.Root])
+		}
+	} else {
+		log.Printf("No combinations found for Lava")
+	}
+	
+	return nil
 }
 
-func CreateInverseGraph(graph Graph) InverseGraph {
-	inverse := make(InverseGraph)
-	for result, combos := range graph {
-		for _, combo := range combos {
-			a, b := combo[0], combo[1]
-			if _, exists := inverse[a]; !exists {
-				inverse[a] = make(map[string][]string)
-			}
-			inverse[a][b] = append(inverse[a][b], result)
-			if a != b {
-				if _, exists := inverse[b]; !exists {
-					inverse[b] = make(map[string][]string)
-				}
-				inverse[b][a] = append(inverse[b][a], result)
-			}
-		}
+func isBasic(element string) bool {
+	basics := map[string]bool{
+		"Earth": true,
+		"Air":   true,
+		"Water": true,
+		"Fire":  true,
+		"Time":  true,
 	}
-	return inverse
+	return basics[element]
 }
 
-func BFSRecipe(graph Graph, start []string, target string, timeout time.Duration) ([]Step, bool, int) {
-	log.Printf("BFS: Starting search for target: %s", target)
-	inverse := CreateInverseGraph(graph)
-	queueSize := 10000 
-	forwardQueue := make([]State, 0, queueSize)
-	forwardQueue = append(forwardQueue, State{Available: sliceToSet(start), Path: []Step{}, Depth: 0})
-	visitedStates := make(map[string]struct{})
-	visitedStates[stateHash(sliceToSet(start))] = struct{}{}
-	nodesVisited := 0
-	startTime := time.Now()
-	if forwardQueue[0].Available[target] {
-		log.Printf("BFS: Target %s is already available in start elements", target)
-		return []Step{}, true, 1
-	}
-	maxDepth := 7 
-	canLeadToTarget := make(map[string]bool)
-	for result, combos := range graph {
-		if result == target {
-			for _, combo := range combos {
-				canLeadToTarget[combo[0]] = true
-				canLeadToTarget[combo[1]] = true
-			}
-		}
-	}
-	intermediateElements := make(map[string]bool)
-	for result, combos := range graph {
-		for _, combo := range combos {
-			if canLeadToTarget[result] {
-				intermediateElements[combo[0]] = true
-				intermediateElements[combo[1]] = true
-			}
-		}
-	}
-	for len(forwardQueue) > 0 {
-		if time.Since(startTime) > timeout {
-			log.Printf("BFS: Search timed out after visiting %d nodes", nodesVisited)
-			return nil, false, nodesVisited
-		}
-		current := forwardQueue[0]
-		forwardQueue = forwardQueue[1:]
-		nodesVisited++
-		if nodesVisited%1000 == 0 {
-			log.Printf("BFS: Visited %d nodes, queue size: %d, current depth: %d", nodesVisited, len(forwardQueue), current.Depth)
-		}
-		if current.Depth >= maxDepth {
-			continue
-		}
-		available := make([]string, 0, len(current.Available))
-		for elem := range current.Available {
-			available = append(available, elem)
-		}
-		sort.Slice(available, func(i, j int) bool {
-			iCanLead := canLeadToTarget[available[i]] || intermediateElements[available[i]]
-			jCanLead := canLeadToTarget[available[j]] || intermediateElements[available[j]]
-			return iCanLead && !jCanLead
-		})
-		for i := 0; i < len(available); i++ {
-			a := available[i]
-			if !canLeadToTarget[a] && !intermediateElements[a] && current.Depth > 0 {
-				continue
-			}
-			for j := i; j < len(available); j++ {
-				b := available[j]
-				if !canLeadToTarget[a] && !intermediateElements[a] && 
-				   !canLeadToTarget[b] && !intermediateElements[b] {
-					continue
-				}
-				if _, exists := inverse[a]; !exists {
-					continue
-				}
-				results, exists := inverse[a][b]
-				if !exists {
-					continue
-				}
-				for _, result := range results {
-					if result == target {
-						log.Printf("BFS: Found target %s after visiting %d nodes", target, nodesVisited)
-						newPath := make([]Step, len(current.Path))
-						copy(newPath, current.Path)
-						newPath = append(newPath, Step{
-							Ingredients: [2]string{a, b},
-							Result:      result,
-						})
-						return newPath, true, nodesVisited
-					}
-					if !current.Available[result] {
-						newAvailable := copyMap(current.Available)
-						newAvailable[result] = true
-						stateKey := stateHash(newAvailable)
-						if _, visited := visitedStates[stateKey]; !visited {
-							visitedStates[stateKey] = struct{}{}
-							if len(forwardQueue) < queueSize {
-								newPath := make([]Step, len(current.Path))
-								copy(newPath, current.Path)
-								newPath = append(newPath, Step{
-									Ingredients: [2]string{a, b},
-									Result:      result,
-								})
-								forwardQueue = append(forwardQueue, State{
-									Available: newAvailable,
-									Path:      newPath,
-									Depth:     current.Depth + 1,
-								})
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	log.Printf("BFS: Target %s not found after visiting %d nodes", target, nodesVisited)
-	return nil, false, nodesVisited
-}
-
-func DFSRecipe(graph Graph, start []string, target string, timeout time.Duration) ([]Step, bool, int) {
-	log.Printf("DFS: Starting search for target: %s", target)
-	inverse := CreateInverseGraph(graph)
-	stack := []State{{Available: sliceToSet(start), Path: []Step{}, Depth: 0}}
-	visitedStates := make(map[string]struct{})
-	visitedStates[stateHash(sliceToSet(start))] = struct{}{}
-	nodesVisited := 0
-	startTime := time.Now()
-	if stack[0].Available[target] {
-		log.Printf("DFS: Target %s is already available in start elements", target)
-		return []Step{}, true, 1
-	}
-	maxDepth := 10
-	for len(stack) > 0 {
-		if time.Since(startTime) > timeout {
-			log.Printf("DFS: Search timed out after visiting %d nodes", nodesVisited)
-			return nil, false, nodesVisited
-		}
-		current := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		nodesVisited++
-		if nodesVisited%1000 == 0 {
-			log.Printf("DFS: Visited %d nodes, stack size: %d, current depth: %d", nodesVisited, len(stack), current.Depth)
-		}
-		if current.Depth >= maxDepth {
-			continue
-		}
-		available := keys(current.Available)
-		for i := 0; i < len(available); i++ {
-			for j := i; j < len(available); j++ {
-				a, b := available[i], available[j]
-				if _, exists := inverse[a]; !exists {
-					continue
-				}
-				results, exists := inverse[a][b]
-				if !exists {
-					continue
-				}
-				for _, result := range results {
-					if result == target {
-						log.Printf("DFS: Found target %s after visiting %d nodes", target, nodesVisited)
-						newPath := make([]Step, len(current.Path))
-						copy(newPath, current.Path)
-						newPath = append(newPath, Step{
-							Ingredients: [2]string{a, b},
-							Result:      result,
-						})
-						return newPath, true, nodesVisited
-					}
-					if !current.Available[result] {
-						newAvailable := copyMap(current.Available)
-						newAvailable[result] = true
-						stateKey := stateHash(newAvailable)
-						if _, visited := visitedStates[stateKey]; !visited {
-							visitedStates[stateKey] = struct{}{}
-							newPath := make([]Step, len(current.Path))
-							copy(newPath, current.Path)
-							newPath = append(newPath, Step{
-								Ingredients: [2]string{a, b},
-								Result:      result,
-							})
-							stack = append(stack, State{
-								Available: newAvailable,
-								Path:      newPath,
-								Depth:     current.Depth + 1,
-							})
-						}
-					}
-				}
-			}
-		}
-	}
-	log.Printf("DFS: Target %s not found after visiting %d nodes", target, nodesVisited)
-	return nil, false, nodesVisited
-}
-
-func stateHash(available map[string]bool) string {
-	keys := make([]string, 0, len(available))
-	for k := range available {
-		keys = append(keys, k)
-	}
-	return strings.Join(keys, ",")
-}
-
-func sliceToSet(slice []string) map[string]bool {
-	set := make(map[string]bool)
-	for _, s := range slice {
-		set[s] = true
-	}
-	return set
-}
-
-func keys(m map[string]bool) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
-}
-
-func copyMap(m map[string]bool) map[string]bool {
-	newMap := make(map[string]bool)
-	for k, v := range m {
-		newMap[k] = v
-	}
-	return newMap
-}
-
-func enableCORS(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Set("Access-Control-Max-Age", "86400") 
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		next(w, r)
-	}
-}
-
-func searchHandler(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Received request: %s %s", r.Method, r.URL.String())
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	element := strings.ToLower(r.URL.Query().Get("element"))
-	mode := strings.ToLower(r.URL.Query().Get("mode"))
-	log.Printf("Searching for element: %s with mode: %s", element, mode)
-	if element == "" {
-		http.Error(w, "Element parameter is required", http.StatusBadRequest)
-		return
-	}
-	graph, err := LoadGraph("combinations.json")
-	if err != nil {
-		log.Printf("Error loading graph: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	log.Printf("Graph loaded with %d elements", len(graph))
-	inverse := CreateInverseGraph(graph)
-	isBaseElement := false
-	for _, base := range []string{"air", "earth", "fire", "water"} {
-		if element == base {
-			isBaseElement = true
+func FindRecipeBFS(target string) *Node {
+	log.Printf("BFS: Starting search for %s", target)
+	
+	// Find the actual case of the element in our combinations
+	var actualElement string
+	for root := range combinations {
+		if strings.EqualFold(root, target) {
+			actualElement = root
 			break
 		}
 	}
-	elementExists := isBaseElement || graph[element] != nil
-	if !elementExists {
-		for _, combos := range inverse {
-			for _, results := range combos {
-				for _, result := range results {
-					if result == element {
-						elementExists = true
-						break
-					}
+	
+	if actualElement == "" {
+		log.Printf("BFS: No combinations found for %s", target)
+		BFSVisitedCount = 0
+		return nil
+	}
+	
+	target = actualElement // Use the actual case from combinations
+	
+	if isBasic(target) {
+		log.Printf("BFS: %s is a basic element", target)
+		BFSVisitedCount = 1
+		return &Node{Element: target}
+	}
+
+	// Check if the target exists in our combinations
+	if _, exists := combinations[target]; !exists {
+		log.Printf("BFS: No combinations found for %s", target)
+		BFSVisitedCount = 0
+		return nil
+	}
+
+	log.Printf("BFS: Found combinations for %s, tier: %d", target, tierMap[target])
+
+	visited := make(map[string]bool)
+	recipeMap := make(map[string]*Node)
+	queue := []string{target}
+	BFSVisitedCount = 0
+
+	log.Printf("BFS: Starting BFS traversal for %s", target)
+
+	// First pass: BFS to find all relevant elements
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if visited[current] {
+			continue
+		}
+		visited[current] = true
+		BFSVisitedCount++
+
+		log.Printf("BFS: Visiting %s (visited count: %d, tier: %d)", current, BFSVisitedCount, tierMap[current])
+
+		if isBasic(current) {
+			recipeMap[current] = &Node{Element: current}
+			continue
+		}
+
+		for _, comb := range combinations[current] {
+			leftTier := tierMap[comb.Left]
+			rightTier := tierMap[comb.Right]
+			currentTier := tierMap[current]
+
+			log.Printf("BFS: Checking combination %s = %s(%d) + %s(%d)", 
+				current, comb.Left, leftTier, comb.Right, rightTier)
+
+			// More lenient tier comparison
+			if leftTier <= currentTier && rightTier <= currentTier {
+				if !visited[comb.Left] {
+					queue = append(queue, comb.Left)
+					log.Printf("BFS: Added %s to queue (tier: %d)", comb.Left, leftTier)
 				}
-				if elementExists {
-					break
+				if !visited[comb.Right] {
+					queue = append(queue, comb.Right)
+					log.Printf("BFS: Added %s to queue (tier: %d)", comb.Right, rightTier)
+				}
+			} else {
+				log.Printf("BFS: Skipping combination due to tier constraints")
+			}
+		}
+	}
+
+	log.Printf("BFS: Starting recipe building phase")
+
+	// Second pass: Bottom-up build recipes
+	changed := true
+	for changed {
+		changed = false
+		for elem := range visited {
+			if recipeMap[elem] != nil {
+				continue
+			}
+			for _, comb := range combinations[elem] {
+				leftTier := tierMap[comb.Left]
+				rightTier := tierMap[comb.Right]
+				elemTier := tierMap[elem]
+
+				log.Printf("BFS: Trying to build recipe for %s (tier: %d) from %s(%d) + %s(%d)",
+					elem, elemTier, comb.Left, leftTier, comb.Right, rightTier)
+
+				if leftTier <= elemTier && rightTier <= elemTier {
+					leftRecipe := recipeMap[comb.Left]
+					rightRecipe := recipeMap[comb.Right]
+					if leftRecipe != nil && rightRecipe != nil {
+						recipeMap[elem] = &Node{
+							Element: elem,
+							Left:    leftRecipe,
+							Right:   rightRecipe,
+						}
+						changed = true
+						log.Printf("BFS: Built recipe for %s", elem)
+						break
+					} else {
+						log.Printf("BFS: Missing recipe for %s or %s", comb.Left, comb.Right)
+					}
+				} else {
+					log.Printf("BFS: Tier constraints not met for %s", elem)
 				}
 			}
-			if elementExists {
+		}
+	}
+
+	result := recipeMap[target]
+	if result == nil {
+		log.Printf("BFS: No recipe found for %s", target)
+	} else {
+		log.Printf("BFS: Found recipe for %s", target)
+	}
+	return result
+}
+
+func FindRecipeDFS(target string, visited map[string]bool) *Node {
+	// Check if the target exists in our combinations
+	if _, exists := combinations[target]; !exists && !isBasic(target) {
+		return nil
+	}
+
+	if isBasic(target) {
+		DFSVisitedCount++
+		return &Node{Element: target}
+	}
+
+	if visited == nil {
+		visited = make(map[string]bool)
+		DFSVisitedCount = 0
+	}
+
+	if visited[target] {
+		return nil
+	}
+
+	visited[target] = true
+	DFSVisitedCount++
+	
+	// Save original state to restore later
+	defer func() { visited[target] = false }()
+
+	for _, comb := range combinations[target] {
+		// Allow ingredients of the same tier or lower
+		if tierMap[comb.Left] <= tierMap[target] && tierMap[comb.Right] <= tierMap[target] {
+			left := FindRecipeDFS(comb.Left, visited)
+			if left == nil {
+				continue
+			}
+			right := FindRecipeDFS(comb.Right, visited)
+			if right != nil {
+				return &Node{Element: target, Left: left, Right: right}
+			}
+		}
+	}
+	
+	return nil
+}
+
+func FindMultipleRecipes(target string, maxCount int) []*Node {
+	var results []*Node
+	
+	// Reset the visited count
+	MultiVisitedCount = 0
+	
+	// Check if target exists
+	if _, exists := combinations[target]; !exists && !isBasic(target) {
+		return results
+	}
+	
+	// Early return for basic elements
+	if isBasic(target) {
+		MultiVisitedCount = 1
+		return []*Node{{Element: target}}
+	}
+
+	// Use channels to collect results from goroutines
+	resultChan := make(chan *Node, maxCount*2)
+	var wg sync.WaitGroup
+	
+	// Create a semaphore to limit concurrent goroutines
+	semaphore := make(chan struct{}, 5)
+	
+	// Track visited nodes globally for the multivisited count
+	var visitedCountMutex sync.Mutex
+	
+	// Find all valid combinations for the target
+	validCombos := make([]Combination, 0)
+	for _, comb := range combinations[target] {
+		if tierMap[comb.Left] <= tierMap[target] && tierMap[comb.Right] <= tierMap[target] {
+			validCombos = append(validCombos, comb)
+		}
+	}
+	
+	// Process each valid combination
+	for _, comb := range validCombos {
+		wg.Add(1)
+		semaphore <- struct{}{}  // Acquire semaphore
+		
+		go func(c Combination) {
+			defer wg.Done()
+			defer func() { <-semaphore }()  // Release semaphore
+			
+			// Find recipe for left ingredient
+			leftVisited := make(map[string]bool)
+			left := exploreRecipe(c.Left, leftVisited, &visitedCountMutex)
+			if left == nil {
+				return
+			}
+			
+			// Find recipe for right ingredient
+			rightVisited := make(map[string]bool)
+			right := exploreRecipe(c.Right, rightVisited, &visitedCountMutex)
+			if right == nil {
+				return
+			}
+			
+			// Create the node and send to result channel
+			resultChan <- &Node{
+				Element: target,
+				Left:    left,
+				Right:   right,
+			}
+		}(comb)
+	}
+	
+	// Wait in a separate goroutine and close the channel when done
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+	
+	// Collect results and ensure uniqueness
+	seen := make(map[string]bool)
+	for node := range resultChan {
+		signature := serializeTree(node)
+		if !seen[signature] {
+			seen[signature] = true
+			results = append(results, node)
+			if len(results) >= maxCount {
 				break
 			}
 		}
 	}
-	if !elementExists {
-		log.Printf("Element %s not found in graph and cannot be created", element)
-		response := SearchResponse{
-			Path:  nil,
-			Found: false,
-			Steps: 0,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-	if isBaseElement {
-		log.Printf("Element %s is a base element", element)
-	} else if combos, exists := graph[element]; exists {
-		log.Printf("Element %s found in graph with %d combinations:", element, len(combos))
-		for _, combo := range combos {
-			log.Printf("  - %s + %s", combo[0], combo[1])
-		}
-	} else {
-		log.Printf("Element %s can be created from other combinations", element)
-	}
-	baseElements := []string{"air", "earth", "fire", "water"}
-	log.Printf("Starting with base elements: %v", baseElements)
-	var steps []Step
-	var found bool
-	var nodesVisited int
-	timeout := 60 * time.Second
-	if mode == "dfs" {
-		log.Printf("Starting DFS search for element: %s", element)
-		steps, found, nodesVisited = DFSRecipe(graph, baseElements, element, timeout)
-	} else {
-		log.Printf("Starting BFS search for element: %s", element)
-		steps, found, nodesVisited = BFSRecipe(graph, baseElements, element, timeout)
-	}
-	log.Printf("Search completed. Found: %v, Steps: %d", found, nodesVisited)
-	if found {
-		log.Printf("Path length: %d", len(steps))
-		for i, step := range steps {
-			log.Printf("Step %d: %s + %s = %s", i+1, step.Ingredients[0], step.Ingredients[1], step.Result)
-		}
-	}
-	response := SearchResponse{
-		Path:  steps,
-		Found: found,
-		Steps: nodesVisited,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	
+	// Sort results by depth for consistent output
+	sort.Slice(results, func(i, j int) bool {
+		return treeDepth(results[i]) < treeDepth(results[j])
+	})
+	
+	return results
 }
 
-type VisualizationNode struct {
-	ID       string   `json:"id"`
-	Label    string   `json:"label"`
-	Children []string `json:"children"`
-	Parent   string   `json:"parent"`
-	Depth    int      `json:"depth"`
+// Helper function to explore a recipe with tracked visited count
+func exploreRecipe(target string, visited map[string]bool, mutex *sync.Mutex) *Node {
+	if isBasic(target) {
+		mutex.Lock()
+		MultiVisitedCount++
+		mutex.Unlock()
+		return &Node{Element: target}
+	}
+	
+	if visited[target] {
+		return nil
+	}
+	
+	visited[target] = true
+	mutex.Lock()
+	MultiVisitedCount++
+	mutex.Unlock()
+	
+	// Store valid candidates to avoid duplicate work
+	var validCandidates []*Node
+	
+	for _, comb := range combinations[target] {
+		if tierMap[comb.Left] <= tierMap[target] && tierMap[comb.Right] <= tierMap[target] {
+			leftVisited := copyVisitedMap(visited)
+			left := exploreRecipe(comb.Left, leftVisited, mutex)
+			if left == nil {
+				continue
+			}
+			
+			rightVisited := copyVisitedMap(visited)
+			right := exploreRecipe(comb.Right, rightVisited, mutex)
+			if right == nil {
+				continue
+			}
+			
+			validCandidates = append(validCandidates, &Node{
+				Element: target,
+				Left:    left,
+				Right:   right,
+			})
+		}
+	}
+	
+	if len(validCandidates) == 0 {
+		return nil
+	}
+	
+	// Return the simplest candidate (lowest tree depth)
+	sort.Slice(validCandidates, func(i, j int) bool {
+		return treeDepth(validCandidates[i]) < treeDepth(validCandidates[j])
+	})
+	
+	return validCandidates[0]
 }
 
-type VisualizationData struct {
-	Nodes []VisualizationNode `json:"nodes"`
-	Edges []struct {
-		From string `json:"from"`
-		To   string `json:"to"`
-	} `json:"edges"`
+// Helper to copy a visited map
+func copyVisitedMap(original map[string]bool) map[string]bool {
+	copy := make(map[string]bool)
+	for k, v := range original {
+		copy[k] = v
+	}
+	return copy
 }
 
-func visualizationHandler(w http.ResponseWriter, r *http.Request) {
+// Calculate tree depth
+func treeDepth(node *Node) int {
+	if node == nil {
+		return 0
+	}
+	leftDepth := treeDepth(node.Left)
+	rightDepth := treeDepth(node.Right)
+	if leftDepth > rightDepth {
+		return leftDepth + 1
+	}
+	return rightDepth + 1
+}
+
+// Serialize a tree to a unique string representation
+func serializeTree(n *Node) string {
+	if n == nil {
+		return ""
+	}
+	if n.Left == nil && n.Right == nil {
+		return n.Element
+	}
+	// Create a deterministic string representation
+	leftStr := serializeTree(n.Left)
+	rightStr := serializeTree(n.Right)
+	
+	// Sort children for consistency
+	if leftStr > rightStr {
+		return n.Element + "(" + rightStr + "," + leftStr + ")"
+	}
+	return n.Element + "(" + leftStr + "," + rightStr + ")"
+}
+
+// Public API
+func IsBasic(element string) bool {
+	return isBasic(element)
+}
+
+func GetCombinations(element string) []Combination {
+	return combinations[element]
+}
+
+func IsLowerTier(c Combination) bool {
+	return tierMap[c.Left] < tierMap[c.Root] && tierMap[c.Right] < tierMap[c.Root]
+}
+
+func GetBFSVisited() int {
+	return BFSVisitedCount
+}
+
+func GetDFSVisited() int {
+	return DFSVisitedCount
+}
+
+func GetMultiVisited() int {
+	return MultiVisitedCount
+}
+
+func main() {
+	// Load combinations from file
+	err := LoadCombinations("combinations.json")
+	if err != nil {
+		log.Fatalf("Error loading combinations: %v", err)
+	}
+
+	// Set up CORS middleware
+	corsMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
+			next(w, r)
+		}
+	}
+
+	// Set up routes
+	http.HandleFunc("/search", corsMiddleware(handleSearch))
+
+	// Start server
+	port := ":5000"
+	log.Printf("Server starting on port %s", port)
+	if err := http.ListenAndServe(port, nil); err != nil {
+		log.Fatalf("Error starting server: %v", err)
+	}
+}
+
+func handleSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	element := strings.ToLower(r.URL.Query().Get("element"))
-	mode := strings.ToLower(r.URL.Query().Get("mode"))
+
+	element := r.URL.Query().Get("element")
+	mode := r.URL.Query().Get("mode")
+
+	log.Printf("Searching for element: %s with mode: %s", element, mode)
+
 	if element == "" {
 		http.Error(w, "Element parameter is required", http.StatusBadRequest)
 		return
 	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-	w.Header().Set("Access-Control-Max-Age", "86400")
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	visChan := make(chan VisualizationData)
-	go func() {
-		graph, err := LoadGraph("combinations.json")
-		if err != nil {
-			log.Printf("Error loading graph: %v", err)
-			visChan <- VisualizationData{
-				Nodes: []VisualizationNode{{
-					ID:       "error",
-					Label:    "Error loading graph",
-					Children: make([]string, 0),
-					Parent:   "",
-					Depth:    0,
-				}},
-				Edges: make([]struct {
-					From string `json:"from"`
-					To   string `json:"to"`
-				}, 0),
-			}
-			close(visChan)
-			return
+
+	// Debug: Check if element exists in combinations (case-insensitive)
+	elementFound := false
+	var elementCombos []Combination
+	for root, combos := range combinations {
+		if strings.EqualFold(root, element) {
+			elementFound = true
+			elementCombos = combos
+			log.Printf("Found %d combinations for element %s (case-insensitive match with %s)", 
+				len(combos), element, root)
+			break
 		}
-		baseElements := []string{"air", "earth", "fire", "water"}
-		timeout := 60 * time.Second
-		if mode == "dfs" {
-			DFSRecipeWithVisualization(graph, baseElements, element, timeout, visChan)
+	}
+
+	if elementFound {
+		for _, c := range elementCombos {
+			log.Printf("Combination: %s = %s + %s (tier: %s)", c.Root, c.Left, c.Right, c.Tier)
+		}
+	} else {
+		log.Printf("No combinations found for element %s", element)
+	}
+
+	var response SearchResponse
+	var paths [][]Step
+
+	switch mode {
+	case "bfs":
+		log.Printf("Using BFS search")
+		node := FindRecipeBFS(element)
+		if node != nil {
+			response.Found = true
+			response.Steps = BFSVisitedCount
+			paths = append(paths, nodeToPath(node))
+			log.Printf("BFS found recipe with %d steps", BFSVisitedCount)
 		} else {
-			BFSRecipeWithVisualization(graph, baseElements, element, timeout, visChan)
+			log.Printf("BFS did not find recipe")
 		}
-		close(visChan)
-	}()
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+	case "dfs":
+		log.Printf("Using DFS search")
+		node := FindRecipeDFS(element, nil)
+		if node != nil {
+			response.Found = true
+			response.Steps = DFSVisitedCount
+			paths = append(paths, nodeToPath(node))
+			log.Printf("DFS found recipe with %d steps", DFSVisitedCount)
+		} else {
+			log.Printf("DFS did not find recipe")
+		}
+	case "multi":
+		log.Printf("Using Multi-Recipe search")
+		nodes := FindMultipleRecipes(element, 5) // Limit to 5 recipes
+		if len(nodes) > 0 {
+			response.Found = true
+			response.Steps = MultiVisitedCount
+			for _, node := range nodes {
+				paths = append(paths, nodeToPath(node))
+			}
+			log.Printf("Multi-Recipe found %d recipes with %d steps", len(nodes), MultiVisitedCount)
+		} else {
+			log.Printf("Multi-Recipe did not find any recipes")
+		}
+	default:
+		http.Error(w, "Invalid search mode", http.StatusBadRequest)
 		return
 	}
-	initialData := VisualizationData{
-		Nodes: []VisualizationNode{{
-			ID:       "root",
-			Label:    "Root",
-			Children: make([]string, 0),
-			Parent:   "",
-			Depth:    0,
-		}},
-		Edges: make([]struct {
-			From string `json:"from"`
-			To   string `json:"to"`
-		}, 0),
-	}
-	jsonData, err := json.Marshal(initialData)
-	if err != nil {
-		log.Printf("Error marshaling initial data: %v", err)
-		return
-	}
-	fmt.Fprintf(w, "data: %s\n\n", jsonData)
-	flusher.Flush()
-	for data := range visChan {
-		jsonData, err := json.Marshal(data)
-		if err != nil {
-			log.Printf("Error marshaling visualization data: %v", err)
-			continue
-		}
-		fmt.Fprintf(w, "data: %s\n\n", jsonData)
-		flusher.Flush()
-	}
-	fmt.Fprintf(w, "event: end\ndata: {}\n\n")
-	flusher.Flush()
+
+	response.Paths = paths
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
-func BFSRecipeWithVisualization(graph Graph, start []string, target string, timeout time.Duration, visChan chan VisualizationData) ([]Step, bool, int) {
-	inverse := CreateInverseGraph(graph)
-	queueSize := 10000
-	forwardQueue := make([]State, 0, queueSize)
-	initialState := State{
-		Available: sliceToSet(start),
-		Path:      []Step{},
-		Depth:     0,
-		ID:        "root",
-		ParentID:  "",
+func nodeToPath(node *Node) []Step {
+	if node == nil {
+		return nil
 	}
-	forwardQueue = append(forwardQueue, initialState)
-	visitedStates := make(map[string]struct{})
-	visitedStates[stateHash(sliceToSet(start))] = struct{}{}
-	nodesVisited := 0
-	startTime := time.Now()
-	maxDepth := 7
-	sendVisualizationData(visChan, []State{initialState}, State{})
-	if initialState.Available[target] {
-		return []Step{}, true, 1
-	}
-	for len(forwardQueue) > 0 {
-		if time.Since(startTime) > timeout {
-			return nil, false, nodesVisited
-		}
-		current := forwardQueue[0]
-		forwardQueue = forwardQueue[1:]
-		nodesVisited++
-		sendVisualizationData(visChan, forwardQueue, current)
-		time.Sleep(500 * time.Millisecond) 
-		if current.Depth >= maxDepth {
-			continue
-		}
-		available := make([]string, 0, len(current.Available))
-		for elem := range current.Available {
-			available = append(available, elem)
-		}
-		for i := 0; i < len(available); i++ {
-			a := available[i]
-			for j := i; j < len(available); j++ {
-				b := available[j]
-				if _, exists := inverse[a]; !exists {
-					continue
-				}
-				results, exists := inverse[a][b]
-				if !exists {
-					continue
-				}
-				for _, result := range results {
-					if result == target {
-						newPath := make([]Step, len(current.Path))
-						copy(newPath, current.Path)
-						newPath = append(newPath, Step{
-							Ingredients: [2]string{a, b},
-							Result:      result,
-						})
-						return newPath, true, nodesVisited
-					}
-					if !current.Available[result] {
-						newAvailable := copyMap(current.Available)
-						newAvailable[result] = true
-						stateKey := stateHash(newAvailable)
-						if _, visited := visitedStates[stateKey]; !visited {
-							visitedStates[stateKey] = struct{}{}
-							if len(forwardQueue) < queueSize {
-								newState := State{
-									Available: newAvailable,
-									Path:      append(make([]Step, len(current.Path)), current.Path...),
-									Depth:     current.Depth + 1,
-									ID:        fmt.Sprintf("%s_%d", result, nodesVisited),
-									ParentID:  current.ID,
-								}
-								newState.Path = append(newState.Path, Step{
-									Ingredients: [2]string{a, b},
-									Result:      result,
-								})
-								forwardQueue = append(forwardQueue, newState)
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	return nil, false, nodesVisited
-}
 
-func DFSRecipeWithVisualization(graph Graph, start []string, target string, timeout time.Duration, visChan chan VisualizationData) ([]Step, bool, int) {
-	inverse := CreateInverseGraph(graph)
-	stack := make([]State, 0, 10000)
-	initialState := State{
-		Available: sliceToSet(start),
-		Path:      []Step{},
-		Depth:     0,
-		ID:        "root",
-		ParentID:  "",
-	}
-	stack = append(stack, initialState)
-	visitedStates := make(map[string]struct{})
-	visitedStates[stateHash(sliceToSet(start))] = struct{}{}
-	nodesVisited := 0
-	startTime := time.Now()
-	maxDepth := 7
-	sendVisualizationData(visChan, []State{initialState}, State{})
-	if initialState.Available[target] {
-		return []Step{}, true, 1
-	}
-	for len(stack) > 0 {
-		if time.Since(startTime) > timeout {
-			return nil, false, nodesVisited
-		}
-		current := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		nodesVisited++
-		sendVisualizationData(visChan, stack, current)
-		time.Sleep(500 * time.Millisecond) 
-		if current.Depth >= maxDepth {
-			continue
-		}
-		available := make([]string, 0, len(current.Available))
-		for elem := range current.Available {
-			available = append(available, elem)
-		}
-		for i := 0; i < len(available); i++ {
-			a := available[i]
-			for j := i; j < len(available); j++ {
-				b := available[j]
-				if _, exists := inverse[a]; !exists {
-					continue
-				}
-				results, exists := inverse[a][b]
-				if !exists {
-					continue
-				}
-				for _, result := range results {
-					if result == target {
-						newPath := make([]Step, len(current.Path))
-						copy(newPath, current.Path)
-						newPath = append(newPath, Step{
-							Ingredients: [2]string{a, b},
-							Result:      result,
-						})
-						return newPath, true, nodesVisited
-					}
-					if !current.Available[result] {
-						newAvailable := copyMap(current.Available)
-						newAvailable[result] = true
-						stateKey := stateHash(newAvailable)
-						if _, visited := visitedStates[stateKey]; !visited {
-							visitedStates[stateKey] = struct{}{}
-							if len(stack) < 10000 {
-								newState := State{
-									Available: newAvailable,
-									Path:      append(make([]Step, len(current.Path)), current.Path...),
-									Depth:     current.Depth + 1,
-									ID:        fmt.Sprintf("%s_%d", result, nodesVisited),
-									ParentID:  current.ID,
-								}
-								newState.Path = append(newState.Path, Step{
-									Ingredients: [2]string{a, b},
-									Result:      result,
-								})
-								stack = append(stack, newState)
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	return nil, false, nodesVisited
-}
+	var path []Step
+	if node.Left != nil && node.Right != nil {
+		// Add paths from children first
+		leftPath := nodeToPath(node.Left)
+		rightPath := nodeToPath(node.Right)
+		path = append(path, leftPath...)
+		path = append(path, rightPath...)
 
-func sendVisualizationData(visChan chan VisualizationData, queue []State, currentState State) {
-	data := VisualizationData{
-		Nodes: make([]VisualizationNode, 0),
-		Edges: make([]struct {
-			From string `json:"from"`
-			To   string `json:"to"`
-		}, 0),
-	}
-	for _, state := range queue {
-		label := "Root"
-		if len(state.Path) > 0 {
-			lastStep := state.Path[len(state.Path)-1]
-			label = fmt.Sprintf("%s + %s\n= %s", 
-				lastStep.Ingredients[0], 
-				lastStep.Ingredients[1], 
-				lastStep.Result)
-		}
-		node := VisualizationNode{
-			ID:       state.ID,
-			Label:    label,
-			Children: make([]string, 0),
-			Parent:   state.ParentID,
-			Depth:    state.Depth,
-		}
-		data.Nodes = append(data.Nodes, node)
-		if state.ParentID != "" {
-			data.Edges = append(data.Edges, struct {
-				From string `json:"from"`
-				To   string `json:"to"`
-			}{
-				From: state.ParentID,
-				To:   state.ID,
-			})
-		}
-	}
-	if currentState.ID != "" {
-		label := "Root"
-		if len(currentState.Path) > 0 {
-			lastStep := currentState.Path[len(currentState.Path)-1]
-			label = fmt.Sprintf("%s + %s\n= %s", 
-				lastStep.Ingredients[0], 
-				lastStep.Ingredients[1], 
-				lastStep.Result)
-		}
-		node := VisualizationNode{
-			ID:       currentState.ID,
-			Label:    label,
-			Children: make([]string, 0),
-			Parent:   currentState.ParentID,
-			Depth:    currentState.Depth,
-		}
-		data.Nodes = append(data.Nodes, node)
-		if currentState.ParentID != "" {
-			data.Edges = append(data.Edges, struct {
-				From string `json:"from"`
-				To   string `json:"to"`
-			}{
-				From: currentState.ParentID,
-				To:   currentState.ID,
-			})
-		}
-	}
-	if len(data.Nodes) == 0 {
-		data.Nodes = append(data.Nodes, VisualizationNode{
-			ID:       "root",
-			Label:    "Root",
-			Parent:   "",
-			Depth:    0,
+		// Add this node's step
+		path = append(path, Step{
+			Ingredients: []string{node.Left.Element, node.Right.Element},
+			Result:      node.Element,
 		})
 	}
-	log.Printf("Sending visualization data: %+v", data)
-	visChan <- data
-}
 
-func main() {
-	log.Println("Starting server...")
-	log.Println("Server will listen on :5000")
-	http.HandleFunc("/search", enableCORS(searchHandler))
-	http.HandleFunc("/visualize", enableCORS(visualizationHandler))
-	if err := http.ListenAndServe(":5000", nil); err != nil {
-		log.Fatal("Server failed to start:", err)
-	}
-} 
+	return path
+}
