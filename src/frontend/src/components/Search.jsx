@@ -19,6 +19,7 @@ const Search = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState(null);
   const [searchResult, setSearchResult] = useState(null);
+  const [selectedRecipeIndex, setSelectedRecipeIndex] = useState(0);
 
   const handleSearch = useCallback(async (e) => {
     e.preventDefault();
@@ -27,6 +28,7 @@ const Search = () => {
     setIsSearching(true);
     setError(null);
     setSearchResult(null);
+    setSelectedRecipeIndex(0);
 
     try {
       const response = await fetch(
@@ -47,54 +49,47 @@ const Search = () => {
     }
   }, [searchElement, searchMode]);
 
-  return (
-    <div className="space-y-8">
-      {/* Search Form */}
-      <div className="glass rounded-2xl p-8 shadow-xl">
-        <form onSubmit={handleSearch} className="space-y-6">
-          <div>
-            <label htmlFor="element" className="block text-sm font-medium text-gray-300 mb-2">
-              Element to Search
-            </label>
-            <input
-              type="text"
-              id="element"
-              value={searchElement}
-              onChange={(e) => setSearchElement(e.target.value.toLowerCase())}
-              placeholder="Enter element name..."
-              className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white placeholder-gray-400"
-              disabled={isSearching}
-            />
-          </div>
+  const handleRecipeChange = (index) => {
+    setSelectedRecipeIndex(index);
+  };
 
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Search Algorithm
-            </label>
+  return (
+    <div className="container mx-auto px-4 py-8 space-y-8">
+      {/* Search Form */}
+      <form onSubmit={handleSearch} className="glass rounded-2xl p-8 shadow-xl">
+        <div className="flex flex-col md:flex-row gap-4">
+          <input
+            type="text"
+            value={searchElement}
+            onChange={(e) => setSearchElement(e.target.value)}
+            placeholder="Enter element to search..."
+            className="flex-1 px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+          />
+          <div className="relative">
             <select
               value={searchMode}
               onChange={(e) => setSearchMode(e.target.value)}
-              className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-white"
-              disabled={isSearching}
+              className="appearance-none px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white focus:outline-none focus:border-blue-500 pr-10 cursor-pointer hover:bg-white/15 transition-colors"
             >
-              <option value="bfs">BFS (Breadth-First Search)</option>
-              <option value="dfs">DFS (Depth-First Search)</option>
+              <option value="bfs" className="bg-gray-800 text-white">BFS</option>
+              <option value="dfs" className="bg-gray-800 text-white">DFS</option>
+              <option value="multi" className="bg-gray-800 text-white">Multi-Recipe</option>
             </select>
+            <div className="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
           </div>
-
           <button
             type="submit"
-            disabled={isSearching || !searchElement.trim()}
-            className={`w-full py-2 px-4 rounded-lg font-medium transition-colors ${
-              isSearching || !searchElement.trim()
-                ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                : 'bg-blue-600 hover:bg-blue-700 text-white'
-            }`}
+            disabled={isSearching}
+            className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {isSearching ? 'Searching...' : 'Search'}
           </button>
-        </form>
-      </div>
+        </div>
+      </form>
 
       {/* Error Display */}
       {error && (
@@ -111,16 +106,38 @@ const Search = () => {
             <p className="text-gray-300">
               Element {searchResult.found ? 'found' : 'not found'} after visiting {searchResult.steps} nodes
             </p>
-            {searchResult.found && searchResult.path.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-lg font-semibold text-white">Path:</h3>
-                <ol className="list-decimal list-inside space-y-1 text-gray-300">
-                  {searchResult.path.map((step, index) => (
-                    <li key={index}>
-                      {step.ingredients[0]} + {step.ingredients[1]} = {step.result}
-                    </li>
-                  ))}
-                </ol>
+            {searchResult.found && searchResult.paths && searchResult.paths.length > 0 && (
+              <div className="space-y-4">
+                {/* Recipe Selector */}
+                {searchResult.paths.length > 1 && (
+                  <div className="flex gap-2 mb-4">
+                    {searchResult.paths.map((_, index) => (
+                      <button
+                        key={index}
+                        onClick={() => handleRecipeChange(index)}
+                        className={`px-4 py-2 rounded-lg ${
+                          selectedRecipeIndex === index
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-white/10 text-gray-300 hover:bg-white/20'
+                        }`}
+                      >
+                        Recipe {index + 1}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Selected Recipe Path */}
+                <div className="space-y-2">
+                  <h3 className="text-lg font-semibold text-white">Path:</h3>
+                  <ol className="list-decimal list-inside space-y-1 text-gray-300">
+                    {searchResult.paths[selectedRecipeIndex].map((step, index) => (
+                      <li key={index}>
+                        {step.ingredients[0]} + {step.ingredients[1]} = {step.result}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
               </div>
             )}
           </div>
@@ -128,13 +145,13 @@ const Search = () => {
       )}
 
       {/* Visualization */}
-      {searchElement && (
+      {searchElement && searchResult?.paths && (
         <div className="glass rounded-2xl p-8 shadow-xl">
           <h2 className="text-2xl font-bold mb-4 text-white">Visualization</h2>
           <SearchVisualization 
             element={searchElement} 
             mode={searchMode} 
-            solutionPath={searchResult?.path || []}
+            solutionPath={searchResult.paths[selectedRecipeIndex] || []}
           />
         </div>
       )}
