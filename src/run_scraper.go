@@ -1,9 +1,9 @@
-// package main
+package main
 
-// import (
-// 	"littlealchemy/backend"
-// )
+import (
+"littlealchemy/backend"
+)
 
-// func main() {
-// 	backend.ScrapeAll()
-// }
+func main() {
+backend.Scraper()
+}
