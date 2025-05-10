@@ -5,6 +5,7 @@ import (
 	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 )
 
 type Combination struct {
@@ -23,7 +24,7 @@ type Node struct {
 var combinations map[string][]Combination
 var tierMap map[string]int
 var BFSVisitedCount int
-var MultiVisitedCount int
+var MultiVisitedCount int32
 var DFSVisitedCount int
 
 func LoadCombinations(filename string) error {
@@ -61,7 +62,6 @@ func FindRecipeBFS(target string) *Node {
 		return &Node{Element: target}
 	}
 
-	// Check if the target exists in our combinations
 	if _, exists := combinations[target]; !exists {
 		BFSVisitedCount = 0
 		return nil
@@ -72,7 +72,6 @@ func FindRecipeBFS(target string) *Node {
 	queue := []string{target}
 	BFSVisitedCount = 0
 
-	// First pass: BFS to find all relevant elements
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
@@ -88,7 +87,6 @@ func FindRecipeBFS(target string) *Node {
 		}
 
 		for _, comb := range combinations[current] {
-			// Only consider combinations with lower tier ingredients
 			if tierMap[comb.Left] < tierMap[current] && tierMap[comb.Right] < tierMap[current] {
 				if !visited[comb.Left] {
 					queue = append(queue, comb.Left)
@@ -100,7 +98,6 @@ func FindRecipeBFS(target string) *Node {
 		}
 	}
 
-	// Second pass: Bottom-up build recipes
 	changed := true
 	for changed {
 		changed = false
@@ -130,7 +127,6 @@ func FindRecipeBFS(target string) *Node {
 }
 
 func FindRecipeDFS(target string, visited map[string]bool) *Node {
-	// Check if the target exists in our combinations
 	if _, exists := combinations[target]; !exists && !isBasic(target) {
 		return nil
 	}
@@ -151,12 +147,10 @@ func FindRecipeDFS(target string, visited map[string]bool) *Node {
 
 	visited[target] = true
 	DFSVisitedCount++
-	
-	// Save original state to restore later
 	defer func() { visited[target] = false }()
 
 	for _, comb := range combinations[target] {
-		if tierMap[comb.Left] <= tierMap[target] && tierMap[comb.Right] <= tierMap[target] {
+		if tierMap[comb.Left] < tierMap[target] && tierMap[comb.Right] < tierMap[target] {
 			left := FindRecipeDFS(comb.Left, visited)
 			if left == nil {
 				continue
@@ -167,160 +161,123 @@ func FindRecipeDFS(target string, visited map[string]bool) *Node {
 			}
 		}
 	}
-	
+
 	return nil
 }
 
 func FindMultipleRecipes(target string, maxCount int) []*Node {
-	var results []*Node
-	
-	// Reset the visited count
-	MultiVisitedCount = 0
-	
-	// Check if target exists
-	if _, exists := combinations[target]; !exists && !isBasic(target) {
-		return results
-	}
-	
-	// Early return for basic elements
 	if isBasic(target) {
-		MultiVisitedCount = 1
+		atomic.StoreInt32(&MultiVisitedCount, 1)
 		return []*Node{{Element: target}}
 	}
+	if _, exists := combinations[target]; !exists {
+		return nil
+	}
 
-	// Use channels to collect results from goroutines
-	resultChan := make(chan *Node, maxCount*2)
+	atomic.StoreInt32(&MultiVisitedCount, 0)
+	var results []*Node
+	resultChan := make(chan *Node, maxCount)
 	var wg sync.WaitGroup
-	
-	// Create a semaphore to limit concurrent goroutines
-	semaphore := make(chan struct{}, 5)
-	
-	// Track visited nodes globally for the multivisited count
-	var visitedCountMutex sync.Mutex
-	
-	// Find all valid combinations for the target
-	validCombos := make([]Combination, 0)
-	for _, comb := range combinations[target] {
-		if tierMap[comb.Left] <= tierMap[target] && tierMap[comb.Right] <= tierMap[target] {
-			validCombos = append(validCombos, comb)
+	semaphore := make(chan struct{}, 10)
+	var seen sync.Map
+	validCombos := []Combination{}
+
+	for _, c := range combinations[target] {
+		if tierMap[c.Left] < tierMap[target] && tierMap[c.Right] < tierMap[target] {
+			validCombos = append(validCombos, c)
 		}
 	}
-	
-	// Process each valid combination
+
+	sort.SliceStable(validCombos, func(i, j int) bool {
+		return validCombos[i].Left+validCombos[i].Right < validCombos[j].Left+validCombos[j].Right
+	})
+
+	found := make(chan struct{})
+
 	for _, comb := range validCombos {
 		wg.Add(1)
-		semaphore <- struct{}{}  // Acquire semaphore
-		
+		semaphore <- struct{}{}
+
 		go func(c Combination) {
 			defer wg.Done()
-			defer func() { <-semaphore }()  // Release semaphore
-			
-			// Find recipe for left ingredient
-			leftVisited := make(map[string]bool)
-			left := exploreRecipe(c.Left, leftVisited, &visitedCountMutex)
+			defer func() { <-semaphore }()
+			select {
+			case <-found:
+				return
+			default:
+			}
+			visited := make(map[string]bool)
+			left := exploreRecipe(c.Left, visited, &MultiVisitedCount)
 			if left == nil {
 				return
 			}
-			
-			// Find recipe for right ingredient
-			rightVisited := make(map[string]bool)
-			right := exploreRecipe(c.Right, rightVisited, &visitedCountMutex)
+			right := exploreRecipe(c.Right, visited, &MultiVisitedCount)
 			if right == nil {
 				return
 			}
-			
-			// Create the node and send to result channel
-			resultChan <- &Node{
-				Element: target,
-				Left:    left,
-				Right:   right,
+			tree := &Node{Element: target, Left: left, Right: right}
+			signature := serializeTree(tree)
+			if _, ok := seen.LoadOrStore(signature, true); !ok {
+				resultChan <- tree
 			}
 		}(comb)
 	}
-	
-	// Wait in a separate goroutine and close the channel when done
+
 	go func() {
 		wg.Wait()
 		close(resultChan)
 	}()
-	
-	// Collect results and ensure uniqueness
-	seen := make(map[string]bool)
-	for node := range resultChan {
-		signature := serializeTree(node)
-		if !seen[signature] {
-			seen[signature] = true
-			results = append(results, node)
-			if len(results) >= maxCount {
-				break
-			}
+
+	for recipe := range resultChan {
+		results = append(results, recipe)
+		if len(results) >= maxCount {
+			close(found)
+			break
 		}
 	}
-	
-	// Sort results by depth for consistent output
-	sort.Slice(results, func(i, j int) bool {
-		return treeDepth(results[i]) < treeDepth(results[j])
-	})
-	
+
 	return results
 }
 
-// Helper function to explore a recipe with tracked visited count
-func exploreRecipe(target string, visited map[string]bool, mutex *sync.Mutex) *Node {
+func exploreRecipe(target string, visited map[string]bool, counter *int32) *Node {
 	if isBasic(target) {
-		mutex.Lock()
-		MultiVisitedCount++
-		mutex.Unlock()
+		atomic.AddInt32(counter, 1)
 		return &Node{Element: target}
 	}
-	
 	if visited[target] {
 		return nil
 	}
-	
 	visited[target] = true
-	mutex.Lock()
-	MultiVisitedCount++
-	mutex.Unlock()
-	
-	// Store valid candidates to avoid duplicate work
-	var validCandidates []*Node
-	
+	atomic.AddInt32(counter, 1)
+
+	var candidates []*Node
 	for _, comb := range combinations[target] {
-		if tierMap[comb.Left] <= tierMap[target] && tierMap[comb.Right] <= tierMap[target] {
+		if tierMap[comb.Left] < tierMap[target] && tierMap[comb.Right] < tierMap[target] {
 			leftVisited := copyVisitedMap(visited)
-			left := exploreRecipe(comb.Left, leftVisited, mutex)
+			left := exploreRecipe(comb.Left, leftVisited, counter)
 			if left == nil {
 				continue
 			}
-			
 			rightVisited := copyVisitedMap(visited)
-			right := exploreRecipe(comb.Right, rightVisited, mutex)
+			right := exploreRecipe(comb.Right, rightVisited, counter)
 			if right == nil {
 				continue
 			}
-			
-			validCandidates = append(validCandidates, &Node{
-				Element: target,
-				Left:    left,
-				Right:   right,
-			})
+			candidates = append(candidates, &Node{Element: target, Left: left, Right: right})
 		}
 	}
-	
-	if len(validCandidates) == 0 {
+
+	if len(candidates) == 0 {
 		return nil
 	}
-	
-	// Return the simplest candidate (lowest tree depth)
-	sort.Slice(validCandidates, func(i, j int) bool {
-		return treeDepth(validCandidates[i]) < treeDepth(validCandidates[j])
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return treeDepth(candidates[i]) < treeDepth(candidates[j])
 	})
-	
-	return validCandidates[0]
+
+	return candidates[0]
 }
 
-// Helper to copy a visited map
 func copyVisitedMap(original map[string]bool) map[string]bool {
 	copy := make(map[string]bool)
 	for k, v := range original {
@@ -329,7 +286,6 @@ func copyVisitedMap(original map[string]bool) map[string]bool {
 	return copy
 }
 
-// Calculate tree depth
 func treeDepth(node *Node) int {
 	if node == nil {
 		return 0
@@ -342,7 +298,6 @@ func treeDepth(node *Node) int {
 	return rightDepth + 1
 }
 
-// Serialize a tree to a unique string representation
 func serializeTree(n *Node) string {
 	if n == nil {
 		return ""
@@ -350,18 +305,14 @@ func serializeTree(n *Node) string {
 	if n.Left == nil && n.Right == nil {
 		return n.Element
 	}
-	// Create a deterministic string representation
 	leftStr := serializeTree(n.Left)
 	rightStr := serializeTree(n.Right)
-	
-	// Sort children for consistency
 	if leftStr > rightStr {
 		return n.Element + "(" + rightStr + "," + leftStr + ")"
 	}
 	return n.Element + "(" + leftStr + "," + rightStr + ")"
 }
 
-// Public API
 func IsBasic(element string) bool {
 	return isBasic(element)
 }
@@ -383,5 +334,5 @@ func GetDFSVisited() int {
 }
 
 func GetMultiVisited() int {
-	return MultiVisitedCount
+	return int(atomic.LoadInt32(&MultiVisitedCount))
 }

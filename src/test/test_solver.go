@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"littlealchemy/backend"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -21,14 +22,20 @@ func printTree(n *backend.Node, depth int) {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run test_solver.go <ElementTarget>")
+		fmt.Println("Usage: go run test_solver.go <ElementTarget> [maxCount]")
 		fmt.Println("Contoh:")
-		fmt.Println("  go run test/test_solver.go Yogurt")
-		fmt.Println("  go run test/test_solver.go Airplane")
 		fmt.Println("  go run test/test_solver.go Brick")
+		fmt.Println("  go run test/test_solver.go Airplane 5")
 		return
 	}
+
 	target := os.Args[1]
+	maxCount := 3
+	if len(os.Args) >= 3 {
+		if val, err := strconv.Atoi(os.Args[2]); err == nil {
+			maxCount = val
+		}
+	}
 
 	err := backend.LoadCombinations("combinations.json")
 	if err != nil {
@@ -69,8 +76,9 @@ func main() {
 	// === Multirecipe ===
 	fmt.Println("\n===Multirecipe===")
 	fmt.Println("elemen yang dicari:", target)
+	fmt.Println("maksimal jumlah recipe:", maxCount)
 	start = time.Now()
-	trees := backend.FindMultipleRecipes(target, 3)
+	trees := backend.FindMultipleRecipes(target, maxCount)
 	duration = time.Since(start)
 	if len(trees) > 0 {
 		for i, t := range trees {
