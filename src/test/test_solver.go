@@ -1,81 +1,76 @@
 package main
-
 import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"time"
-
 	"littlealchemy/backend"
+	"fmt"
+	"time"
 )
-
-// ComboEntry represents a combination entry from the JSON data.
-type ComboEntry struct {
-	Root  string `json:"root"`
-	Left  string `json:"left"`
-	Right string `json:"right"`
-	Tier  string `json:"tier"`
+var visitedNodeCount int
+func resetVisitedCount() {
+	visitedNodeCount = 0
+	
 }
-
-// LoadGraphFromCombinationJSON loads combination data from a JSON file into a backend.Graph.
-func LoadGraphFromCombinationJSON(path string) (backend.Graph, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
+func printTree(n *backend.Node, depth int) {
+	if n == nil {
+		return
 	}
-
-	var entries []ComboEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, err
+	for i := 0; i < depth; i++ {
+		fmt.Print("  ")
 	}
-
-	graph := make(backend.Graph)
-	for _, entry := range entries {
-		if entry.Left != "" && entry.Right != "" {
-			graph[entry.Root] = append(graph[entry.Root], []string{entry.Left, entry.Right})
-		}
-	}
-	return graph, nil
+	fmt.Println(n.Element)
+	printTree(n.Left, depth+1)
+	printTree(n.Right, depth+1)
 }
 
 func main() {
-	startTime := time.Now()
-
-	start := []string{"Earth", "Water", "Fire", "Air"}
-	target := "Airplane"
-
-	// Load graph from combination.json
-	graph, err := LoadGraphFromCombinationJSON("combination.json")
+	err := backend.LoadCombinations("combination.json")
 	if err != nil {
-		panic(err)
+		fmt.Println("Failed to load combination:", err)
+		return
 	}
-
-	// BFS search
-	fmt.Println("=== BFS ===")
-	bfsPath, bfsFound, bfsVisited := backend.BFSRecipe(graph, start, target, 5*time.Second)
-	if bfsFound {
-		for _, step := range bfsPath {
-			fmt.Printf("%s + %s → %s\n", step.Ingredients[0], step.Ingredients[1], step.Result)
-		}
-		fmt.Printf("Total langkah: %d\n", len(bfsPath))
+	target := "Airplane"
+	fmt.Println("===BFS===")
+	fmt.Println("elemen yang dicari:", target)
+	start := time.Now()
+	resetVisitedCount()
+	tree := backend.FindRecipeBFS(target)
+	duration := time.Since(start)
+	if tree != nil {
+		printTree(tree, 0)
+		fmt.Println("hasil: sukses")
 	} else {
-		fmt.Println("Go find by yourself dawg💀💀💀")
+		fmt.Println("hasil: tidak ditemukan")
 	}
-	fmt.Printf("Node dikunjungi: %d\n", bfsVisited)
-
-	// DFS search
-	fmt.Println("\n=== DFS ===")
-	dfsPath, dfsFound, dfsVisited := backend.DFSRecipe(graph, start, target, 5*time.Second)
-	if dfsFound {
-		for _, step := range dfsPath {
-			fmt.Printf("%s + %s → %s\n", step.Ingredients[0], step.Ingredients[1], step.Result)
-		}
-		fmt.Printf("Total langkah: %d\n", len(dfsPath))
+	fmt.Println("waktu pencarian:", duration)
+	fmt.Println("jumlah node yang dikunjungi:", backend.GetBFSVisited())
+	fmt.Println("\n===DFS===")
+	fmt.Println("elemen yang dicari:", target)
+	start = time.Now()
+	resetVisitedCount()
+	tree2 := backend.FindRecipeDFS(target, make(map[string]bool))
+	duration = time.Since(start)
+	if tree2 != nil {
+		printTree(tree2, 0)
+		fmt.Println("hasil: sukses")
 	} else {
-		fmt.Println("Go find by yourself dawg💀💀💀")
+		fmt.Println("hasil: tidak ditemukan")
 	}
-	fmt.Printf("Node dikunjungi: %d\n", dfsVisited)
-
-	// Total execution time
-	fmt.Printf("\nTotal waktu eksekusi: %s\n", time.Since(startTime))
+	fmt.Println("waktu pencarian:", duration)
+	fmt.Println("jumlah node yang dikunjungi:", backend.GetDFSVisited())
+	fmt.Println("\n===Multirecipe===")
+	fmt.Println("elemen yang dicari:", target)
+	start = time.Now()
+	resetVisitedCount()
+	trees := backend.FindMultipleRecipes(target, 3)
+	duration = time.Since(start)
+	if len(trees) > 0 {
+		for i, t := range trees {
+			fmt.Printf("Recipe #%d:\n", i+1)
+			printTree(t, 0)
+		}
+		fmt.Println("hasil:", len(trees), "recipe ditemukan")
+	} else {
+		fmt.Println("hasil: tidak ditemukan")
+	}
+	fmt.Println("waktu pencarian:", duration)
+	fmt.Println("jumlah node yang dikunjungi:", backend.GetMultiVisited())
 }
