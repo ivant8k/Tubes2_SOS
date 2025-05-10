@@ -14,6 +14,9 @@ import (
 
 type CombinationMap map[string]map[string][]string
 
+// Base elements (Tier 0)
+var baseElements = []string{"air", "earth", "fire", "water"}
+
 func fetchDocument(url string) *goquery.Document {
 	time.Sleep(100 * time.Millisecond)
 	res, err := http.Get(url)
@@ -38,9 +41,13 @@ func ScrapeAll() {
 	mainDoc := fetchDocument(baseURL)
 
 	combinations := make(CombinationMap)
+	tierMap := make(map[string]int)
+	for _, elem := range baseElements {
+		tierMap[elem] = 0
+	}
 
 	mainDoc.Find(`li.c-element-list__item[data-val="1"]`).Each(func(i int, s *goquery.Selection) {
-		firstIngredient := strings.TrimSpace(s.Find("a").Text())
+		firstIngredient := strings.ToLower(strings.TrimSpace(s.Find("a").Text()))
 		link, exists := s.Find("a").Attr("href")
 		if !exists || firstIngredient == "" {
 			return
@@ -56,6 +63,7 @@ func ScrapeAll() {
 			if cols.Length() < 2 {
 				return
 			}
+
 			secondIngredient := strings.ToLower(strings.TrimSpace(cols.Eq(0).Text()))
 			results := []string{}
 			cols.Each(func(k int, a *goquery.Selection) {
@@ -67,12 +75,21 @@ func ScrapeAll() {
 					results = append(results, result)
 				}
 			})
+
 			if secondIngredient != "" && len(results) > 0 {
 				recipes[secondIngredient] = results
 			}
 		})
 
-		combinations[strings.ToLower(firstIngredient)] = recipes
+		for _, resultList := range recipes {
+			for _, result := range resultList {
+				if _, exists := tierMap[result]; !exists {
+					tierMap[result] = tierMap[firstIngredient] + 1
+				}
+			}
+		}
+
+		combinations[firstIngredient] = recipes
 	})
 
 	file, err := os.Create("combinations.json")

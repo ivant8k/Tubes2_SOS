@@ -12,7 +12,7 @@ func main() {
 	start := []string{"earth", "water", "fire", "air"}
 	target := "airplane"
 
-	graph, err := backend.LoadGraph("graph_combinations.json")
+	graph, err := backend.LoadGraph("combinations.json")
 	if err != nil {
 		panic(err)
 	}
