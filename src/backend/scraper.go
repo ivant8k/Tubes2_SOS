@@ -53,7 +53,13 @@ func Scraper() {
 		elements := extractElementsFromTable(match[2], tier)
 		allElements = append(allElements, elements...)
 	}
-
+	
+	allElements = append(allElements, Element{
+		Root: "Time",
+		Left: "",
+		Right: "",
+		Tier: "0",
+	})
 
 	// Save to combinations.json
 	data, err := json.MarshalIndent(allElements, "", "  ")
