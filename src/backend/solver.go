@@ -1,10 +1,10 @@
 package backend
 
 import (
-	"context"
+	//"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
+	//"math/rand"
 	"os"
 	"sort"
 	"sync"
@@ -73,126 +73,156 @@ func isBasic(element string) bool {
 	return basics[element]
 }
 
+func getSortedBasicElements() []string {
+    basics := []string{}
+    for elem := range tierMap {
+        if isBasic(elem) {
+            basics = append(basics, elem)
+        }
+    }
+    sort.Strings(basics)
+    return basics
+}
+
 func FindRecipeBidirectional(target string) *Node {
-	if isBasic(target) {
-		return &Node{Element: target}
-	}
-	if _, exists := combinations[target]; !exists {
-		return nil
-	}
+    if isBasic(target) {
+        return &Node{Element: target}
+    }
+    if _, exists := combinations[target]; !exists {
+        return nil
+    }
 
-	// Visited maps dan queue
-	forwardVisited := make(map[string]bool)
-	backwardVisited := make(map[string]bool)
-	parentF := make(map[string]string)
-	parentB := make(map[string]string)
-	recipeF := make(map[string]RecipePath)
+    // Forward search (basic → target)
+    forwardVisited := make(map[string]*Node)
+    queueF := getSortedBasicElements()
+    
+    // Backward search (target → basic)
+    backwardVisited := make(map[string]bool)
+    queueB := []string{target}
 
-	queueF := []string{}
-	queueB := []string{}
-	BidirectionalVisitedCount = 0
+    // Initialize
+    for _, elem := range queueF {
+        forwardVisited[elem] = &Node{Element: elem}
+    }
+    backwardVisited[target] = true
+    BidirectionalVisitedCount = len(queueF) + 1
 
-	// Inisialisasi forward dari basic elements
-	for element := range tierMap {
-		if isBasic(element) {
-			queueF = append(queueF, element)
-			forwardVisited[element] = true
-			parentF[element] = ""
-			BidirectionalVisitedCount++
-		}
-	}
+    var intersection string
+    found := false
 
-	// Inisialisasi backward dari target
-	queueB = append(queueB, target)
-	backwardVisited[target] = true
-	parentB[target] = ""
-	BidirectionalVisitedCount++
+    // Main search loop
+    for len(queueF) > 0 && len(queueB) > 0 && !found {
+        // Forward expansion - build actual recipes
+        queueF, found = expandForwardBuild(queueF, forwardVisited, backwardVisited, &intersection)
+        
+        if !found {
+            // Backward expansion - track dependencies
+            queueB, found = expandBackwardTrack(queueB, backwardVisited, forwardVisited, &intersection)
+        }
+    }
 
-	var intersection string
-	found := false
+    if !found {
+        return nil
+    }
 
-	for len(queueF) > 0 && len(queueB) > 0 && !found {
-		// Expand forward
-		nextF := []string{}
-		for _, current := range queueF {
-			for _, combs := range combinations {
-				for _, c := range combs {
-					if (c.Left == current || c.Right == current) &&
-						forwardVisited[c.Left] && forwardVisited[c.Right] &&
-						tierMap[c.Left] < tierMap[c.Root] && tierMap[c.Right] < tierMap[c.Root] {
+    // Return the fully constructed recipe
+    if node, exists := forwardVisited[target]; exists {
+        return node
+    }
+    return constructFromIntersection(intersection, forwardVisited, backwardVisited, target)
+}
 
-						if !forwardVisited[c.Root] {
-							forwardVisited[c.Root] = true
-							parentF[c.Root] = current
-							recipeF[c.Root] = RecipePath{Left: c.Left, Right: c.Right}
-							nextF = append(nextF, c.Root)
-							BidirectionalVisitedCount++
-							if backwardVisited[c.Root] {
-								intersection = c.Root
-								found = true
-								break
-							}
-						}
-					}
-				}
-				if found {
-					break
-				}
-			}
-			if found {
-				break
-			}
-		}
-		queueF = nextF
-		if found {
-			break
-		}
+func expandForwardBuild(queue []string, visited map[string]*Node, otherVisited map[string]bool, intersection *string) ([]string, bool) {
+    next := []string{}
+    sort.Strings(queue)
 
-		// Expand backward
-		nextB := []string{}
-		for _, current := range queueB {
-			for _, parent := range reverseMap[current] {
-				if !backwardVisited[parent] {
-					backwardVisited[parent] = true
-					parentB[parent] = current
-					nextB = append(nextB, parent)
-					BidirectionalVisitedCount++
-					if forwardVisited[parent] {
-						intersection = parent
-						found = true
-						break
-					}
-				}
-			}
-			if found {
-				break
-			}
-		}
-		queueB = nextB
-	}
+    for _, current := range queue {
+        // Cari semua kombinasi dimana current adalah salah satu komponen
+        for root, combList := range combinations {
+            if _, exists := visited[root]; exists {
+                continue
+            }
 
-	if !found {
-		return nil
-	}
+            for _, comb := range combList {
+                // Pastikan tier valid dan current terlibat dalam kombinasi ini
+                if (comb.Left == current || comb.Right == current) &&
+                   tierMap[comb.Left] < tierMap[root] && 
+                   tierMap[comb.Right] < tierMap[root] {
+                    
+                    leftNode, leftExists := visited[comb.Left]
+                    rightNode, rightExists := visited[comb.Right]
+                    
+                    if leftExists && rightExists {
+                        visited[root] = &Node{
+                            Element: root,
+                            Left:    leftNode,
+                            Right:   rightNode,
+                        }
+                        next = append(next, root)
+                        BidirectionalVisitedCount++
 
-	// Build tree recursively dari intersection menggunakan recipeF
-	var buildRecipeTree func(string) *Node
-	buildRecipeTree = func(root string) *Node {
-		if isBasic(root) {
-			return &Node{Element: root}
-		}
-		recipe, exists := recipeF[root]
-		if !exists {
-			return &Node{Element: root}
-		}
-		return &Node{
-			Element: root,
-			Left:    buildRecipeTree(recipe.Left),
-			Right:   buildRecipeTree(recipe.Right),
-		}
-	}
+                        if otherVisited[root] {
+                            *intersection = root
+                            return nil, true
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return next, false
+}
 
-	return buildRecipeTree(intersection)
+func expandBackwardTrack(queue []string, visited map[string]bool, otherVisited map[string]*Node, intersection *string) ([]string, bool) {
+    next := []string{}
+    sort.Strings(queue)
+
+    for _, current := range queue {
+        for _, comb := range combinations[current] {
+            for _, ingredient := range []string{comb.Left, comb.Right} {
+                if !visited[ingredient] && tierMap[ingredient] < tierMap[current] {
+                    visited[ingredient] = true
+                    next = append(next, ingredient)
+                    BidirectionalVisitedCount++
+
+                    if _, exists := otherVisited[ingredient]; exists {
+                        *intersection = ingredient
+                        return nil, true
+                    }
+                }
+            }
+        }
+    }
+    return next, false
+}
+
+func constructFromIntersection(intersection string, forwardVisited map[string]*Node, backwardVisited map[string]bool, target string) *Node {
+    // Rebuild the backward path
+    var buildBackward func(string) *Node
+    buildBackward = func(elem string) *Node {
+        if node, exists := forwardVisited[elem]; exists {
+            return node
+        }
+        
+        // Find a valid combination
+        for _, comb := range combinations[elem] {
+            if backwardVisited[comb.Left] && backwardVisited[comb.Right] &&
+               tierMap[comb.Left] < tierMap[elem] && tierMap[comb.Right] < tierMap[elem] {
+                return &Node{
+                    Element: elem,
+                    Left:    buildBackward(comb.Left),
+                    Right:   buildBackward(comb.Right),
+                }
+            }
+        }
+        return &Node{Element: elem}
+    }
+
+    return &Node{
+        Element: target,
+        Left:    forwardVisited[intersection],
+        Right:   buildBackward(target),
+    }
 }
 
 // // Helper function to construct the final recipe when we've found a meeting point
@@ -559,77 +589,77 @@ func FindMultipleRecipes(target string, maxCount int) []*Node {
 	return results
 }
 
-// Helper function to find multiple variations of recipes for an element
-func exploreRecipeVariations(target string, visited map[string]bool, counter *int32, ctx context.Context, seen *sync.Map, resultChan chan<- *Node) *Node {
-	// Check for context cancellation
-	select {
-	case <-ctx.Done():
-		return nil
-	default:
-	}
+// // Helper function to find multiple variations of recipes for an element
+// func exploreRecipeVariations(target string, visited map[string]bool, counter *int32, ctx context.Context, seen *sync.Map, resultChan chan<- *Node) *Node {
+// 	// Check for context cancellation
+// 	select {
+// 	case <-ctx.Done():
+// 		return nil
+// 	default:
+// 	}
 	
-	if isBasic(target) {
-		atomic.AddInt32(counter, 1)
-		return &Node{Element: target}
-	}
+// 	if isBasic(target) {
+// 		atomic.AddInt32(counter, 1)
+// 		return &Node{Element: target}
+// 	}
 	
-	if visited[target] {
-		return nil
-	}
+// 	if visited[target] {
+// 		return nil
+// 	}
 	
-	visited[target] = true
-	atomic.AddInt32(counter, 1)
+// 	visited[target] = true
+// 	atomic.AddInt32(counter, 1)
 	
-	// Get valid combinations for this element
-	validCombos := []Combination{}
-	for _, c := range combinations[target] {
-		if tierMap[c.Left] < tierMap[target] && tierMap[c.Right] < tierMap[target] {
-			validCombos = append(validCombos, c)
-		}
-	}
+// 	// Get valid combinations for this element
+// 	validCombos := []Combination{}
+// 	for _, c := range combinations[target] {
+// 		if tierMap[c.Left] < tierMap[target] && tierMap[c.Right] < tierMap[target] {
+// 			validCombos = append(validCombos, c)
+// 		}
+// 	}
 	
-	// If no valid combinations, return nil
-	if len(validCombos) == 0 {
-		return nil
-	}
+// 	// If no valid combinations, return nil
+// 	if len(validCombos) == 0 {
+// 		return nil
+// 	}
 	
-	// Randomly shuffle combinations to increase recipe variety
-	rand.Shuffle(len(validCombos), func(i, j int) {
-		validCombos[i], validCombos[j] = validCombos[j], validCombos[i]
-	})
+// 	// Randomly shuffle combinations to increase recipe variety
+// 	rand.Shuffle(len(validCombos), func(i, j int) {
+// 		validCombos[i], validCombos[j] = validCombos[j], validCombos[i]
+// 	})
 	
-	// Try each combination
-	for _, c := range validCombos {
-		leftVisited := copyVisitedMap(visited)
-		left := exploreRecipeVariations(c.Left, leftVisited, counter, ctx, seen, resultChan)
-		if left == nil {
-			continue
-		}
+// 	// Try each combination
+// 	for _, c := range validCombos {
+// 		leftVisited := copyVisitedMap(visited)
+// 		left := exploreRecipeVariations(c.Left, leftVisited, counter, ctx, seen, resultChan)
+// 		if left == nil {
+// 			continue
+// 		}
 		
-		rightVisited := copyVisitedMap(visited)
-		right := exploreRecipeVariations(c.Right, rightVisited, counter, ctx, seen, resultChan)
-		if right == nil {
-			continue
-		}
+// 		rightVisited := copyVisitedMap(visited)
+// 		right := exploreRecipeVariations(c.Right, rightVisited, counter, ctx, seen, resultChan)
+// 		if right == nil {
+// 			continue
+// 		}
 		
-		return &Node{
-			Element: target,
-			Left:    left,
-			Right:   right,
-		}
-	}
+// 		return &Node{
+// 			Element: target,
+// 			Left:    left,
+// 			Right:   right,
+// 		}
+// 	}
 	
-	return nil
-}
+// 	return nil
+// }
 
-// The original helper functions remain unchanged
-func copyVisitedMap(original map[string]bool) map[string]bool {
-	copy := make(map[string]bool)
-	for k, v := range original {
-		copy[k] = v
-	}
-	return copy
-}
+// // The original helper functions remain unchanged
+// func copyVisitedMap(original map[string]bool) map[string]bool {
+// 	copy := make(map[string]bool)
+// 	for k, v := range original {
+// 		copy[k] = v
+// 	}
+// 	return copy
+// }
 
 func treeDepth(node *Node) int {
 	if node == nil {
