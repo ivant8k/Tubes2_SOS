@@ -26,6 +26,9 @@ var tierMap map[string]int
 var BFSVisitedCount int
 var MultiVisitedCount int32
 var DFSVisitedCount int
+var BidirectionalVisitedCount int
+
+var reverseMap map[string][]string
 
 func LoadCombinations(filename string) error {
 	data, err := os.ReadFile(filename)
@@ -38,12 +41,18 @@ func LoadCombinations(filename string) error {
 	}
 	combinations = make(map[string][]Combination)
 	tierMap = make(map[string]int)
+	reverseMap = make(map[string][]string)
+
 	for _, c := range raw {
 		combinations[c.Root] = append(combinations[c.Root], c)
 		tierMap[c.Root] = c.Tier
+		// Build reverse index
+		reverseMap[c.Left] = append(reverseMap[c.Left], c.Root)
+		reverseMap[c.Right] = append(reverseMap[c.Right], c.Root)
 	}
 	return nil
 }
+
 
 func isBasic(element string) bool {
 	basics := map[string]bool{
@@ -54,6 +63,99 @@ func isBasic(element string) bool {
 		"Time":  true,
 	}
 	return basics[element]
+}
+
+func FindRecipeBidirectional(target string) *Node {
+	if isBasic(target) {
+		return &Node{Element: target}
+	}
+
+	forwardVisited := make(map[string]*Node)
+	backwardVisited := make(map[string]*Node)
+	queueF := []string{}
+	queueB := []string{}
+	visitedF := make(map[string]bool)
+	visitedB := make(map[string]bool)
+	BidirectionalVisitedCount = 0
+
+	// Inisialisasi forward dengan elemen basic
+	for e := range tierMap {
+		if isBasic(e) {
+			forwardVisited[e] = &Node{Element: e}
+			queueF = append(queueF, e)
+			visitedF[e] = true
+			BidirectionalVisitedCount++
+		}
+	}
+
+	// Inisialisasi backward dari target
+	backwardVisited[target] = &Node{Element: target}
+	queueB = append(queueB, target)
+	visitedB[target] = true
+	BidirectionalVisitedCount++
+
+	for len(queueF) > 0 && len(queueB) > 0 {
+		// Forward step
+		nextF := []string{}
+		for _, current := range queueF {
+			for _, comb := range combinations {
+				for _, c := range comb {
+					if (c.Left == current || c.Right == current) &&
+						forwardVisited[c.Left] != nil && forwardVisited[c.Right] != nil &&
+						tierMap[c.Left] < tierMap[c.Root] && tierMap[c.Right] < tierMap[c.Root] {
+
+						if forwardVisited[c.Root] == nil {
+							forwardVisited[c.Root] = &Node{
+								Element: c.Root,
+								Left:    forwardVisited[c.Left],
+								Right:   forwardVisited[c.Right],
+							}
+							if visitedB[c.Root] {
+								// Gabungkan dua pohon di titik temu
+								return &Node{
+									Element: c.Root,
+									Left:    forwardVisited[c.Root],
+									Right:   backwardVisited[c.Root],
+								}
+							}
+							visitedF[c.Root] = true
+							BidirectionalVisitedCount++
+							nextF = append(nextF, c.Root)
+						}
+					}
+				}
+			}
+		}
+		queueF = nextF
+
+		// Backward step
+		nextB := []string{}
+		for _, current := range queueB {
+			for _, parent := range reverseMap[current] {
+				if !visitedB[parent] {
+					for _, c := range combinations[parent] {
+						if c.Left == current || c.Right == current {
+							backwardVisited[parent] = &Node{Element: parent}
+							if visitedF[parent] {
+								return &Node{
+									Element: parent,
+									Left:    forwardVisited[parent],
+									Right:   backwardVisited[parent],
+								}
+							}
+							visitedB[parent] = true
+							BidirectionalVisitedCount++
+							nextB = append(nextB, parent)
+							break
+						}
+					}
+				}
+			}
+		}
+		queueB = nextB
+	}
+
+	return nil
 }
 
 func FindRecipeBFS(target string) *Node {
@@ -335,4 +437,8 @@ func GetDFSVisited() int {
 
 func GetMultiVisited() int {
 	return int(atomic.LoadInt32(&MultiVisitedCount))
+}
+
+func GetBidirectionalVisited() int {
+	return BidirectionalVisitedCount
 }

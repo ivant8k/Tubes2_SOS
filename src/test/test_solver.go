@@ -91,4 +91,20 @@ func main() {
 	}
 	fmt.Println("waktu pencarian:", duration)
 	fmt.Println("jumlah node yang dikunjungi:", backend.GetMultiVisited())
+
+	// === Bidirectional ===
+	fmt.Println("\n===Bidirectional===")
+	fmt.Println("elemen yang dicari:", target)
+	start = time.Now()
+	tree3 := backend.FindRecipeBidirectional(target)
+	duration = time.Since(start)
+	if tree3 != nil {
+		printTree(tree3, 0)
+		fmt.Println("hasil: sukses")
+	} else {
+		fmt.Println("hasil: tidak ditemukan")
+	}
+	fmt.Println("waktu pencarian:", duration)
+	fmt.Println("jumlah node yang dikunjungi:", backend.GetBidirectionalVisited())
+
 }
