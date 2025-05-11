@@ -2,10 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"math/rand"
+	"net/http"
 	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Combination struct {
@@ -28,13 +32,14 @@ var MultiVisitedCount int32
 var DFSVisitedCount int
 
 func LoadCombinations(filename string) error {
+	fmt.Println("Loading combinations from:", filename)
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		return err
+		return fmt.Errorf("error reading file: %v", err)
 	}
 	var raw []Combination
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
+		return fmt.Errorf("error unmarshaling JSON: %v", err)
 	}
 	combinations = make(map[string][]Combination)
 	tierMap = make(map[string]int)
@@ -42,6 +47,7 @@ func LoadCombinations(filename string) error {
 		combinations[c.Root] = append(combinations[c.Root], c)
 		tierMap[c.Root] = c.Tier
 	}
+	fmt.Printf("Loaded %d combinations\n", len(raw))
 	return nil
 }
 
@@ -57,21 +63,28 @@ func isBasic(element string) bool {
 }
 
 func FindRecipeBFS(target string) *Node {
+	fmt.Printf("\n=== Starting BFS search for: %s ===\n", target)
+	
 	if isBasic(target) {
+		fmt.Printf("Found basic element: %s\n", target)
 		BFSVisitedCount = 1
 		return &Node{Element: target}
 	}
 
 	if _, exists := combinations[target]; !exists {
+		fmt.Printf("Element %s not found in combinations\n", target)
 		BFSVisitedCount = 0
 		return nil
 	}
 
+	fmt.Printf("Found %d combinations for %s\n", len(combinations[target]), target)
 	visited := make(map[string]bool)
 	recipeMap := make(map[string]*Node)
 	queue := []string{target}
 	BFSVisitedCount = 0
 
+	// First pass: collect all possible combinations
+	fmt.Println("\nFirst pass: Collecting combinations...")
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
@@ -80,24 +93,31 @@ func FindRecipeBFS(target string) *Node {
 		}
 		visited[current] = true
 		BFSVisitedCount++
+		fmt.Printf("Visiting: %s (visited count: %d)\n", current, BFSVisitedCount)
 
 		if isBasic(current) {
+			fmt.Printf("Found basic element: %s\n", current)
 			recipeMap[current] = &Node{Element: current}
 			continue
 		}
 
+		// Add all possible combinations to the queue
 		for _, comb := range combinations[current] {
-			if tierMap[comb.Left] < tierMap[current] && tierMap[comb.Right] < tierMap[current] {
-				if !visited[comb.Left] {
-					queue = append(queue, comb.Left)
-				}
-				if !visited[comb.Right] {
-					queue = append(queue, comb.Right)
-				}
+			fmt.Printf("  Checking combination: %s + %s = %s (tier: %d)\n", 
+				comb.Left, comb.Right, comb.Root, comb.Tier)
+			if !visited[comb.Left] {
+				queue = append(queue, comb.Left)
+				fmt.Printf("    Added to queue: %s\n", comb.Left)
+			}
+			if !visited[comb.Right] {
+				queue = append(queue, comb.Right)
+				fmt.Printf("    Added to queue: %s\n", comb.Right)
 			}
 		}
 	}
 
+	// Second pass: build recipes from basic elements up
+	fmt.Println("\nSecond pass: Building recipes...")
 	changed := true
 	for changed {
 		changed = false
@@ -105,25 +125,33 @@ func FindRecipeBFS(target string) *Node {
 			if recipeMap[elem] != nil {
 				continue
 			}
+
+			// Try all combinations for this element
 			for _, comb := range combinations[elem] {
-				if tierMap[comb.Left] < tierMap[elem] && tierMap[comb.Right] < tierMap[elem] {
-					leftRecipe := recipeMap[comb.Left]
-					rightRecipe := recipeMap[comb.Right]
-					if leftRecipe != nil && rightRecipe != nil {
-						recipeMap[elem] = &Node{
-							Element: elem,
-							Left:    leftRecipe,
-							Right:   rightRecipe,
-						}
-						changed = true
-						break
+				leftRecipe := recipeMap[comb.Left]
+				rightRecipe := recipeMap[comb.Right]
+				if leftRecipe != nil && rightRecipe != nil {
+					fmt.Printf("Found recipe for %s: %s + %s\n", 
+						elem, comb.Left, comb.Right)
+					recipeMap[elem] = &Node{
+						Element: elem,
+						Left:    leftRecipe,
+						Right:   rightRecipe,
 					}
+					changed = true
+					break
 				}
 			}
 		}
 	}
 
-	return recipeMap[target]
+	result := recipeMap[target]
+	if result != nil {
+		fmt.Printf("\nSuccessfully found recipe for %s\n", target)
+	} else {
+		fmt.Printf("\nNo valid recipe found for %s\n", target)
+	}
+	return result
 }
 
 func FindRecipeDFS(target string, visited map[string]bool) *Node {
@@ -178,7 +206,7 @@ func FindMultipleRecipes(target string, maxCount int) []*Node {
 	var results []*Node
 	resultChan := make(chan *Node, maxCount)
 	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 10)
+	semaphore := make(chan struct{}, 30) // Increased from 20 to 30 concurrent searches
 	var seen sync.Map
 	validCombos := []Combination{}
 
@@ -192,8 +220,6 @@ func FindMultipleRecipes(target string, maxCount int) []*Node {
 		return validCombos[i].Left+validCombos[i].Right < validCombos[j].Left+validCombos[j].Right
 	})
 
-	found := make(chan struct{})
-
 	for _, comb := range validCombos {
 		wg.Add(1)
 		semaphore <- struct{}{}
@@ -201,11 +227,7 @@ func FindMultipleRecipes(target string, maxCount int) []*Node {
 		go func(c Combination) {
 			defer wg.Done()
 			defer func() { <-semaphore }()
-			select {
-			case <-found:
-				return
-			default:
-			}
+			
 			visited := make(map[string]bool)
 			left := exploreRecipe(c.Left, visited, &MultiVisitedCount)
 			if left == nil {
@@ -231,7 +253,6 @@ func FindMultipleRecipes(target string, maxCount int) []*Node {
 	for recipe := range resultChan {
 		results = append(results, recipe)
 		if len(results) >= maxCount {
-			close(found)
 			break
 		}
 	}
@@ -271,11 +292,10 @@ func exploreRecipe(target string, visited map[string]bool, counter *int32) *Node
 		return nil
 	}
 
-	sort.Slice(candidates, func(i, j int) bool {
-		return treeDepth(candidates[i]) < treeDepth(candidates[j])
-	})
-
-	return candidates[0]
+	// Return a random candidate instead of always the first one
+	// This helps find different recipe paths
+	rand.Seed(time.Now().UnixNano())
+	return candidates[rand.Intn(len(candidates))]
 }
 
 func copyVisitedMap(original map[string]bool) map[string]bool {
@@ -335,4 +355,181 @@ func GetDFSVisited() int {
 
 func GetMultiVisited() int {
 	return int(atomic.LoadInt32(&MultiVisitedCount))
+}
+
+func enableCORS(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+func handleSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	element := r.URL.Query().Get("element")
+	if element == "" {
+		http.Error(w, "Element parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	mode := r.URL.Query().Get("mode")
+	fmt.Printf("\n=== Search Request ===\n")
+	fmt.Printf("Element: %s\n", element)
+	fmt.Printf("Mode: %s\n", mode)
+
+	var result *Node
+	var visited int
+	var response struct {
+		Found  bool     `json:"found"`
+		Steps  int      `json:"steps"`
+		Paths  [][]Step `json:"paths"`
+	}
+
+	switch mode {
+	case "bfs":
+		result = FindRecipeBFS(element)
+		visited = GetBFSVisited()
+		if result != nil {
+			path := convertRecipeToPath(result)
+			response = struct {
+				Found  bool     `json:"found"`
+				Steps  int      `json:"steps"`
+				Paths  [][]Step `json:"paths"`
+			}{
+				Found: true,
+				Steps: visited,
+				Paths: [][]Step{path},
+			}
+		}
+	case "dfs":
+		result = FindRecipeDFS(element, nil)
+		visited = GetDFSVisited()
+		if result != nil {
+			path := convertRecipeToPath(result)
+			response = struct {
+				Found  bool     `json:"found"`
+				Steps  int      `json:"steps"`
+				Paths  [][]Step `json:"paths"`
+			}{
+				Found: true,
+				Steps: visited,
+				Paths: [][]Step{path},
+			}
+		}
+	case "multi":
+		results := FindMultipleRecipes(element, 10)
+		visited = GetMultiVisited()
+		if len(results) > 0 {
+			paths := make([][]Step, 0, len(results))
+			for _, result := range results {
+				path := convertRecipeToPath(result)
+				paths = append(paths, path)
+			}
+			response = struct {
+				Found  bool     `json:"found"`
+				Steps  int      `json:"steps"`
+				Paths  [][]Step `json:"paths"`
+			}{
+				Found: true,
+				Steps: visited,
+				Paths: paths,
+			}
+		}
+	default:
+		fmt.Printf("Invalid mode: %s\n", mode)
+		http.Error(w, "Invalid mode", http.StatusBadRequest)
+		return
+	}
+
+	if len(response.Paths) == 0 {
+		fmt.Printf("No recipe found for %s\n", element)
+		http.Error(w, "Recipe not found", http.StatusNotFound)
+		return
+	}
+
+	fmt.Printf("Found %d recipes with %d visited nodes\n", len(response.Paths), visited)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+type Step struct {
+	Ingredients []string `json:"ingredients"`
+	Result      string   `json:"result"`
+}
+
+func convertRecipeToPath(node *Node) []Step {
+	if node == nil {
+		return nil
+	}
+
+	// If it's a leaf node (basic element), return empty
+	if node.Left == nil && node.Right == nil {
+		return nil
+	}
+
+	// Get paths for left and right subtrees
+	leftSteps := convertRecipeToPath(node.Left)
+	rightSteps := convertRecipeToPath(node.Right)
+
+	// Create the current step
+	currentStep := Step{
+		Ingredients: []string{node.Left.Element, node.Right.Element},
+		Result:      node.Element,
+	}
+
+	// Combine all steps in the correct order
+	// First add all steps from left subtree, then right subtree, then current step
+	steps := make([]Step, 0)
+	steps = append(steps, leftSteps...)
+	steps = append(steps, rightSteps...)
+	steps = append(steps, currentStep)
+
+	return steps
+}
+
+func handleMode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	modes := []string{"bfs", "dfs", "multi"}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(modes)
+}
+
+func main() {
+	fmt.Println("Starting server...")
+	
+	// Load combinations from file
+	err := LoadCombinations("combinations.json")
+	if err != nil {
+		fmt.Printf("Error loading combinations: %v\n", err)
+		panic(err)
+	}
+
+	// Define HTTP handlers with CORS
+	http.HandleFunc("/search", enableCORS(handleSearch))
+	http.HandleFunc("/mode", enableCORS(handleMode))
+
+	// Start server
+	port := ":5000"
+	fmt.Printf("Server starting on port %s...\n", port)
+	if err := http.ListenAndServe(port, nil); err != nil {
+		fmt.Printf("Error starting server: %v\n", err)
+		panic(err)
+	}
 }
