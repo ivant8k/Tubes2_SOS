@@ -111,6 +111,16 @@ const Search = () => {
             </p>
             {searchResult.found && searchResult.paths && searchResult.paths.length > 0 && (
               <div className="space-y-4">
+                {/* Target Element Info */}
+                <div className="bg-white/5 p-3 rounded-lg">
+                  <p className="text-white text-sm sm:text-base">
+                    Target: <span className="font-semibold">{searchResult.target.element}</span>
+                    <span className="ml-2 px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+                      Tier {searchResult.target.tier}
+                    </span>
+                  </p>
+                </div>
+
                 {/* Recipe Selector */}
                 {searchResult.paths.length > 1 && (
                   <div className="flex flex-wrap gap-2 mb-6">
@@ -137,8 +147,23 @@ const Search = () => {
                   </h3>
                   <ol className="list-decimal list-inside space-y-1 text-gray-300 text-sm sm:text-base">
                     {searchResult.paths[selectedRecipeIndex].map((step, index) => (
-                      <li key={index} className="hover:bg-white/5 p-1 rounded transition-colors">
-                        {step.ingredients[0]} + {step.ingredients[1]} = {step.result}
+                      <li key={index} className="hover:bg-white/5 p-2 rounded transition-colors">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{step.ingredients[0]}</span>
+                          <span className="px-1.5 py-0.5 bg-gray-700/50 text-gray-300 rounded text-xs">
+                            Tier {step.tiers.left}
+                          </span>
+                          <span>+</span>
+                          <span className="font-medium">{step.ingredients[1]}</span>
+                          <span className="px-1.5 py-0.5 bg-gray-700/50 text-gray-300 rounded text-xs">
+                            Tier {step.tiers.right}
+                          </span>
+                          <span>=</span>
+                          <span className="font-medium">{step.result}</span>
+                          <span className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+                            Tier {step.tiers.result}
+                          </span>
+                        </div>
                       </li>
                     ))}
                   </ol>

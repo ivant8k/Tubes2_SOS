@@ -184,11 +184,15 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
         })
         .attr('stroke-width', d => d.depth === 0 ? 3 : 2)
         .attr('stroke-opacity', 0.8);
+
       // Update text size based on screen width
       const fontSize = window.innerWidth < 640 ? 14 : 20;
+      const tierFontSize = window.innerWidth < 640 ? 10 : 12;
+
+      // Add element name
       nodes.append('text')
         .attr('text-anchor', 'middle')
-        .attr('dy', '0.35em')
+        .attr('dy', '-0.2em')
         .attr('font-size', fontSize)
         .attr('fill', d => {
           if (d.depth === 0) return '#fff';
@@ -197,8 +201,49 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
         })
         .text(d => d.data.name)
         .style('opacity', 1);
+
+      // Add tier information
+      nodes.append('text')
+        .attr('text-anchor', 'middle')
+        .attr('dy', '1em')
+        .attr('font-size', tierFontSize)
+        .attr('fill', d => {
+          if (d.depth === 0) return '#fff';
+          if (d.data.children.length === 0) return '#1f2937';
+          return '#fff';
+        })
+        .text(d => {
+          const step = solutionPath.find(s => s.result === d.data.name);
+          if (step) {
+            return `Tier ${step.tiers.result}`;
+          }
+          // For leaf nodes, find their tier from the ingredients
+          const ingredientStep = solutionPath.find(s => 
+            s.ingredients.includes(d.data.name)
+          );
+          if (ingredientStep) {
+            const index = ingredientStep.ingredients.indexOf(d.data.name);
+            return `Tier ${index === 0 ? ingredientStep.tiers.left : ingredientStep.tiers.right}`;
+          }
+          return '';
+        })
+        .style('opacity', 0.8);
+
       nodes.append('title')
-        .text(d => d.data.name);
+        .text(d => {
+          const step = solutionPath.find(s => s.result === d.data.name);
+          if (step) {
+            return `${d.data.name} (Tier ${step.tiers.result})`;
+          }
+          const ingredientStep = solutionPath.find(s => 
+            s.ingredients.includes(d.data.name)
+          );
+          if (ingredientStep) {
+            const index = ingredientStep.ingredients.indexOf(d.data.name);
+            return `${d.data.name} (Tier ${index === 0 ? ingredientStep.tiers.left : ingredientStep.tiers.right})`;
+          }
+          return d.data.name;
+        });
     };
     updateVisualization(currentStep);
   }, [element, mode, solutionPath, currentStep, animationSpeed]);
