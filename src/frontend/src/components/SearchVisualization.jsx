@@ -110,12 +110,17 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
 
     const rootData = buildTreeUpToStep(currentStep);
     const maxDepth = getMaxDepth(rootData);
-    const baseHeight = 3000; // Minimum height is now 3000px
-    const perLevelHeight = 180;
+    const baseHeight = window.innerWidth < 640 ? 2000 : 3000; // Smaller height for mobile
+    const perLevelHeight = window.innerWidth < 640 ? 120 : 180; // Smaller spacing for mobile
     const height = Math.max(baseHeight, baseHeight + maxDepth * perLevelHeight);
-    const width = 1800;
-    const nodeRadius = 60;
-    const margin = { top: 20, right: 90, bottom: 80, left: 90 };
+    const width = window.innerWidth < 640 ? 800 : 1800; // Smaller width for mobile
+    const nodeRadius = window.innerWidth < 640 ? 40 : 60; // Smaller nodes for mobile
+    const margin = { 
+      top: window.innerWidth < 640 ? 10 : 20, 
+      right: window.innerWidth < 640 ? 45 : 90, 
+      bottom: window.innerWidth < 640 ? 40 : 80, 
+      left: window.innerWidth < 640 ? 45 : 90 
+    };
     const svg = d3.select(svgRef.current)
       .attr('width', width)
       .attr('height', height)
@@ -179,10 +184,12 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
         })
         .attr('stroke-width', d => d.depth === 0 ? 3 : 2)
         .attr('stroke-opacity', 0.8);
+      // Update text size based on screen width
+      const fontSize = window.innerWidth < 640 ? 14 : 20;
       nodes.append('text')
         .attr('text-anchor', 'middle')
         .attr('dy', '0.35em')
-        .attr('font-size', 20)
+        .attr('font-size', fontSize)
         .attr('fill', d => {
           if (d.depth === 0) return '#fff';
           if (d.data.children.length === 0) return '#1f2937';
@@ -293,71 +300,71 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
   };
 
   return (
-    <div className="relative">
+    <div className="relative w-full overflow-x-auto">
       <svg ref={svgRef} className="w-full h-full" />
       
       {/* Controls */}
-      <div className="absolute top-4 left-4 flex items-center gap-2 bg-black/50 backdrop-blur-sm p-2 rounded-xl shadow-lg z-10">
-        <div className="text-white text-xs px-2 py-1 border-r border-white/20">
+      <div className="absolute top-2 sm:top-4 left-2 sm:left-4 flex items-center gap-1 sm:gap-2 bg-black/50 backdrop-blur-sm p-1.5 sm:p-2 rounded-xl shadow-lg z-10">
+        <div className="text-white text-xs px-1.5 sm:px-2 py-0.5 sm:py-1 border-r border-white/20">
           Step {currentStep + 1} of {solutionPath?.length || 0}
         </div>
         <button
           onClick={handleReset}
-          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
+          className="flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
           title="Reset"
         >
-          <FaUndo className="w-3 h-3" />
-          <span>Reset</span>
+          <FaUndo className="w-3 h-3 sm:w-4 sm:h-4" />
+          <span className="hidden sm:inline">Reset</span>
         </button>
         
         <button
           onClick={handlePrev}
-          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
+          className="flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
           title="Previous Step"
         >
-          <FaStepBackward className="w-3 h-3" />
-          <span>Prev</span>
+          <FaStepBackward className="w-3 h-3 sm:w-4 sm:h-4" />
+          <span className="hidden sm:inline">Prev</span>
         </button>
         
         <button
           onClick={handlePlayPause}
-          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-all duration-200 hover:scale-110 text-xs"
+          className="flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-all duration-200 hover:scale-110 text-xs"
           title={isAnimating ? "Pause" : "Play"}
         >
           {isAnimating ? (
             <>
-              <FaPause className="w-3 h-3" />
-              <span>Pause</span>
+              <FaPause className="w-3 h-3 sm:w-4 sm:h-4" />
+              <span className="hidden sm:inline">Pause</span>
             </>
           ) : (
             <>
-              <FaPlay className="w-3 h-3" />
-              <span>Play</span>
+              <FaPlay className="w-3 h-3 sm:w-4 sm:h-4" />
+              <span className="hidden sm:inline">Play</span>
             </>
           )}
         </button>
         
         <button
           onClick={handleNext}
-          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
+          className="flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
           title="Next Step"
         >
-          <FaStepForward className="w-3 h-3" />
-          <span>Next</span>
+          <FaStepForward className="w-3 h-3 sm:w-4 sm:h-4" />
+          <span className="hidden sm:inline">Next</span>
         </button>
         
         <button
           onClick={handleEndResult}
-          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
+          className="flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
           title="Show Final Result"
         >
-          <FaFastForward className="w-3 h-3" />
-          <span>End</span>
+          <FaFastForward className="w-3 h-3 sm:w-4 sm:h-4" />
+          <span className="hidden sm:inline">End</span>
         </button>
         
         <button
           onClick={handleSpeed}
-          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
+          className="flex items-center gap-0.5 sm:gap-1 px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
           title="Change Speed"
         >
           <span>{animationSpeed === 1000 ? '1x' : animationSpeed === 500 ? '2x' : '0.5x'}</span>

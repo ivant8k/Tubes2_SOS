@@ -59,20 +59,20 @@ const Search = () => {
   return (
     <div className="container mx-auto px-4 py-8 space-y-8">
       {/* Search Form */}
-      <form onSubmit={handleSearch} className="glass rounded-2xl p-8 shadow-xl">
+      <form onSubmit={handleSearch} className="glass rounded-2xl p-4 sm:p-8 shadow-xl">
         <div className="flex flex-col md:flex-row gap-4">
           <input
             type="text"
             value={searchElement}
             onChange={(e) => setSearchElement(e.target.value)}
             placeholder="Enter element to search..."
-            className="flex-1 px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+            className="flex-1 px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 text-sm sm:text-base"
           />
           <div className="relative">
             <select
               value={searchMode}
               onChange={(e) => setSearchMode(e.target.value)}
-              className="appearance-none px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white focus:outline-none focus:border-blue-500 pr-10 cursor-pointer hover:bg-white/15 transition-colors"
+              className="w-full sm:w-auto appearance-none px-4 py-2 rounded-lg bg-white/10 border border-white/20 text-white focus:outline-none focus:border-blue-500 pr-10 cursor-pointer hover:bg-white/15 transition-colors text-sm sm:text-base"
             >
               <option value="bfs" className="bg-gray-800 text-white">BFS</option>
               <option value="dfs" className="bg-gray-800 text-white">DFS</option>
@@ -87,7 +87,7 @@ const Search = () => {
           <button
             type="submit"
             disabled={isSearching}
-            className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-full sm:w-auto px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm sm:text-base"
           >
             {isSearching ? 'Searching...' : 'Search'}
           </button>
@@ -96,17 +96,17 @@ const Search = () => {
 
       {/* Error Display */}
       {error && (
-        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400">
+        <div className="p-3 sm:p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm sm:text-base">
           {error}
         </div>
       )}
 
       {/* Search Results */}
       {searchResult && (
-        <div className="glass rounded-2xl p-8 shadow-xl">
-          <h2 className="text-2xl font-bold mb-4 text-white">Search Results</h2>
+        <div className="glass rounded-2xl p-4 sm:p-8 shadow-xl">
+          <h2 className="text-xl sm:text-2xl font-bold mb-4 text-white">Search Results</h2>
           <div className="space-y-4">
-            <p className="text-gray-300">
+            <p className="text-gray-300 text-sm sm:text-base">
               Element {searchResult.found ? 'found' : 'not found'} after visiting {searchResult.steps} nodes
             </p>
             {searchResult.found && searchResult.paths && searchResult.paths.length > 0 && (
@@ -118,7 +118,7 @@ const Search = () => {
                       <button
                         key={index}
                         onClick={() => handleRecipeChange(index)}
-                        className={`px-4 py-2 rounded-lg transition-all duration-200 ${
+                        className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg transition-all duration-200 text-sm sm:text-base ${
                           selectedRecipeIndex === index
                             ? 'bg-blue-500 text-white shadow-lg scale-105'
                             : 'bg-white/10 text-gray-300 hover:bg-white/20'
@@ -132,10 +132,10 @@ const Search = () => {
                 
                 {/* Selected Recipe Path */}
                 <div className="space-y-2">
-                  <h3 className="text-lg font-semibold text-white">
+                  <h3 className="text-base sm:text-lg font-semibold text-white">
                     {searchResult.paths.length > 1 ? `Recipe ${selectedRecipeIndex + 1} Path:` : 'Path:'}
                   </h3>
-                  <ol className="list-decimal list-inside space-y-1 text-gray-300">
+                  <ol className="list-decimal list-inside space-y-1 text-gray-300 text-sm sm:text-base">
                     {searchResult.paths[selectedRecipeIndex].map((step, index) => (
                       <li key={index} className="hover:bg-white/5 p-1 rounded transition-colors">
                         {step.ingredients[0]} + {step.ingredients[1]} = {step.result}
@@ -151,8 +151,8 @@ const Search = () => {
 
       {/* Visualization */}
       {searchElement && searchResult?.paths && (
-        <div className="glass rounded-2xl p-8 shadow-xl">
-          <h2 className="text-2xl font-bold mb-4 text-white">Visualization</h2>
+        <div className="glass rounded-2xl p-4 sm:p-8 shadow-xl">
+          <h2 className="text-xl sm:text-2xl font-bold mb-4 text-white">Visualization</h2>
           <SearchVisualization 
             element={searchElement} 
             mode={searchMode} 
