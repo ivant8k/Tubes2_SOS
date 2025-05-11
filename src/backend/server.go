@@ -103,15 +103,21 @@ func FindRecipeBFS(target string) *Node {
 
 		// Add all possible combinations to the queue
 		for _, comb := range combinations[current] {
-			fmt.Printf("  Checking combination: %s + %s = %s (tier: %d)\n", 
-				comb.Left, comb.Right, comb.Root, comb.Tier)
-			if !visited[comb.Left] {
-				queue = append(queue, comb.Left)
-				fmt.Printf("    Added to queue: %s\n", comb.Left)
-			}
-			if !visited[comb.Right] {
-				queue = append(queue, comb.Right)
-				fmt.Printf("    Added to queue: %s\n", comb.Right)
+			// Check if both ingredients are of lower tier than the target
+			if tierMap[comb.Left] < tierMap[current] && tierMap[comb.Right] < tierMap[current] {
+				fmt.Printf("  Checking combination: %s (tier %d) + %s (tier %d) = %s (tier %d)\n", 
+					comb.Left, tierMap[comb.Left], comb.Right, tierMap[comb.Right], comb.Root, comb.Tier)
+				if !visited[comb.Left] {
+					queue = append(queue, comb.Left)
+					fmt.Printf("    Added to queue: %s\n", comb.Left)
+				}
+				if !visited[comb.Right] {
+					queue = append(queue, comb.Right)
+					fmt.Printf("    Added to queue: %s\n", comb.Right)
+				}
+			} else {
+				fmt.Printf("  Skipping invalid combination: %s (tier %d) + %s (tier %d) = %s (tier %d)\n",
+					comb.Left, tierMap[comb.Left], comb.Right, tierMap[comb.Right], comb.Root, comb.Tier)
 			}
 		}
 	}
@@ -128,18 +134,21 @@ func FindRecipeBFS(target string) *Node {
 
 			// Try all combinations for this element
 			for _, comb := range combinations[elem] {
-				leftRecipe := recipeMap[comb.Left]
-				rightRecipe := recipeMap[comb.Right]
-				if leftRecipe != nil && rightRecipe != nil {
-					fmt.Printf("Found recipe for %s: %s + %s\n", 
-						elem, comb.Left, comb.Right)
-					recipeMap[elem] = &Node{
-						Element: elem,
-						Left:    leftRecipe,
-						Right:   rightRecipe,
+				// Check if both ingredients are of lower tier than the target
+				if tierMap[comb.Left] < tierMap[elem] && tierMap[comb.Right] < tierMap[elem] {
+					leftRecipe := recipeMap[comb.Left]
+					rightRecipe := recipeMap[comb.Right]
+					if leftRecipe != nil && rightRecipe != nil {
+						fmt.Printf("Found recipe for %s: %s + %s\n", 
+							elem, comb.Left, comb.Right)
+						recipeMap[elem] = &Node{
+							Element: elem,
+							Left:    leftRecipe,
+							Right:   rightRecipe,
+						}
+						changed = true
+						break
 					}
-					changed = true
-					break
 				}
 			}
 		}
@@ -386,7 +395,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	mode := r.URL.Query().Get("mode")
 	fmt.Printf("\n=== Search Request ===\n")
-	fmt.Printf("Element: %s\n", element)
+	fmt.Printf("Element: %s (Tier: %d)\n", element, tierMap[element])
 	fmt.Printf("Mode: %s\n", mode)
 
 	var result *Node
@@ -395,7 +404,15 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 		Found  bool     `json:"found"`
 		Steps  int      `json:"steps"`
 		Paths  [][]Step `json:"paths"`
+		Target struct {
+			Element string `json:"element"`
+			Tier    int    `json:"tier"`
+		} `json:"target"`
 	}
+
+	// Set target information
+	response.Target.Element = element
+	response.Target.Tier = tierMap[element]
 
 	switch mode {
 	case "bfs":
@@ -407,10 +424,21 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 				Found  bool     `json:"found"`
 				Steps  int      `json:"steps"`
 				Paths  [][]Step `json:"paths"`
+				Target struct {
+					Element string `json:"element"`
+					Tier    int    `json:"tier"`
+				} `json:"target"`
 			}{
 				Found: true,
 				Steps: visited,
 				Paths: [][]Step{path},
+				Target: struct {
+					Element string `json:"element"`
+					Tier    int    `json:"tier"`
+				}{
+					Element: element,
+					Tier:    tierMap[element],
+				},
 			}
 		}
 	case "dfs":
@@ -422,10 +450,21 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 				Found  bool     `json:"found"`
 				Steps  int      `json:"steps"`
 				Paths  [][]Step `json:"paths"`
+				Target struct {
+					Element string `json:"element"`
+					Tier    int    `json:"tier"`
+				} `json:"target"`
 			}{
 				Found: true,
 				Steps: visited,
 				Paths: [][]Step{path},
+				Target: struct {
+					Element string `json:"element"`
+					Tier    int    `json:"tier"`
+				}{
+					Element: element,
+					Tier:    tierMap[element],
+				},
 			}
 		}
 	case "multi":
@@ -441,10 +480,21 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 				Found  bool     `json:"found"`
 				Steps  int      `json:"steps"`
 				Paths  [][]Step `json:"paths"`
+				Target struct {
+					Element string `json:"element"`
+					Tier    int    `json:"tier"`
+				} `json:"target"`
 			}{
 				Found: true,
 				Steps: visited,
 				Paths: paths,
+				Target: struct {
+					Element string `json:"element"`
+					Tier    int    `json:"tier"`
+				}{
+					Element: element,
+					Tier:    tierMap[element],
+				},
 			}
 		}
 	default:
@@ -454,12 +504,21 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(response.Paths) == 0 {
-		fmt.Printf("No recipe found for %s\n", element)
+		fmt.Printf("No recipe found for %s (Tier: %d)\n", element, tierMap[element])
 		http.Error(w, "Recipe not found", http.StatusNotFound)
 		return
 	}
 
 	fmt.Printf("Found %d recipes with %d visited nodes\n", len(response.Paths), visited)
+	for i, path := range response.Paths {
+		fmt.Printf("\nRecipe %d:\n", i+1)
+		for _, step := range path {
+			fmt.Printf("%s (Tier %d) + %s (Tier %d) = %s (Tier %d)\n",
+				step.Ingredients[0], step.Tiers.Left,
+				step.Ingredients[1], step.Tiers.Right,
+				step.Result, step.Tiers.Result)
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -468,6 +527,11 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 type Step struct {
 	Ingredients []string `json:"ingredients"`
 	Result      string   `json:"result"`
+	Tiers       struct {
+		Left   int `json:"left"`
+		Right  int `json:"right"`
+		Result int `json:"result"`
+	} `json:"tiers"`
 }
 
 func convertRecipeToPath(node *Node) []Step {
@@ -489,6 +553,9 @@ func convertRecipeToPath(node *Node) []Step {
 		Ingredients: []string{node.Left.Element, node.Right.Element},
 		Result:      node.Element,
 	}
+	currentStep.Tiers.Left = tierMap[node.Left.Element]
+	currentStep.Tiers.Right = tierMap[node.Right.Element]
+	currentStep.Tiers.Result = tierMap[node.Element]
 
 	// Combine all steps in the correct order
 	// First add all steps from left subtree, then right subtree, then current step
