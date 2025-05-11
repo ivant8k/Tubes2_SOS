@@ -1,11 +1,17 @@
 package backend
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"math/rand"
+	//"net/http"
 	"os"
 	"sort"
+	//"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Combination struct {
@@ -159,21 +165,28 @@ func FindRecipeBidirectional(target string) *Node {
 }
 
 func FindRecipeBFS(target string) *Node {
+	fmt.Printf("\n=== Starting BFS search for: %s ===\n", target)
+	
 	if isBasic(target) {
+		fmt.Printf("Found basic element: %s\n", target)
 		BFSVisitedCount = 1
 		return &Node{Element: target}
 	}
 
 	if _, exists := combinations[target]; !exists {
+		fmt.Printf("Element %s not found in combinations\n", target)
 		BFSVisitedCount = 0
 		return nil
 	}
 
+	fmt.Printf("Found %d combinations for %s\n", len(combinations[target]), target)
 	visited := make(map[string]bool)
 	recipeMap := make(map[string]*Node)
 	queue := []string{target}
 	BFSVisitedCount = 0
 
+	// First pass: collect all possible combinations
+	fmt.Println("\nFirst pass: Collecting combinations...")
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
@@ -182,24 +195,37 @@ func FindRecipeBFS(target string) *Node {
 		}
 		visited[current] = true
 		BFSVisitedCount++
+		fmt.Printf("Visiting: %s (visited count: %d)\n", current, BFSVisitedCount)
 
 		if isBasic(current) {
+			fmt.Printf("Found basic element: %s\n", current)
 			recipeMap[current] = &Node{Element: current}
 			continue
 		}
 
+		// Add all possible combinations to the queue
 		for _, comb := range combinations[current] {
+			// Check if both ingredients are of lower tier than the target
 			if tierMap[comb.Left] < tierMap[current] && tierMap[comb.Right] < tierMap[current] {
+				fmt.Printf("  Checking combination: %s (tier %d) + %s (tier %d) = %s (tier %d)\n", 
+					comb.Left, tierMap[comb.Left], comb.Right, tierMap[comb.Right], comb.Root, comb.Tier)
 				if !visited[comb.Left] {
 					queue = append(queue, comb.Left)
+					fmt.Printf("    Added to queue: %s\n", comb.Left)
 				}
 				if !visited[comb.Right] {
 					queue = append(queue, comb.Right)
+					fmt.Printf("    Added to queue: %s\n", comb.Right)
 				}
+			} else {
+				fmt.Printf("  Skipping invalid combination: %s (tier %d) + %s (tier %d) = %s (tier %d)\n",
+					comb.Left, tierMap[comb.Left], comb.Right, tierMap[comb.Right], comb.Root, comb.Tier)
 			}
 		}
 	}
 
+	// Second pass: build recipes from basic elements up
+	fmt.Println("\nSecond pass: Building recipes...")
 	changed := true
 	for changed {
 		changed = false
@@ -207,11 +233,16 @@ func FindRecipeBFS(target string) *Node {
 			if recipeMap[elem] != nil {
 				continue
 			}
+
+			// Try all combinations for this element
 			for _, comb := range combinations[elem] {
+				// Check if both ingredients are of lower tier than the target
 				if tierMap[comb.Left] < tierMap[elem] && tierMap[comb.Right] < tierMap[elem] {
 					leftRecipe := recipeMap[comb.Left]
 					rightRecipe := recipeMap[comb.Right]
 					if leftRecipe != nil && rightRecipe != nil {
+						fmt.Printf("Found recipe for %s: %s + %s\n", 
+							elem, comb.Left, comb.Right)
 						recipeMap[elem] = &Node{
 							Element: elem,
 							Left:    leftRecipe,
@@ -225,7 +256,13 @@ func FindRecipeBFS(target string) *Node {
 		}
 	}
 
-	return recipeMap[target]
+	result := recipeMap[target]
+	if result != nil {
+		fmt.Printf("\nSuccessfully found recipe for %s\n", target)
+	} else {
+		fmt.Printf("\nNo valid recipe found for %s\n", target)
+	}
+	return result
 }
 
 func FindRecipeDFS(target string, visited map[string]bool) *Node {
@@ -278,64 +315,132 @@ func FindMultipleRecipes(target string, maxCount int) []*Node {
 
 	atomic.StoreInt32(&MultiVisitedCount, 0)
 	var results []*Node
-	resultChan := make(chan *Node, maxCount)
+	resultChan := make(chan *Node, maxCount*8)
 	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 10)
+	semaphore := make(chan struct{}, 200)
 	var seen sync.Map
 	validCombos := []Combination{}
 
+	targetTier := tierMap[target]
+	
+	// Filter and sort combinations by tier difference and complexity
 	for _, c := range combinations[target] {
-		if tierMap[c.Left] < tierMap[target] && tierMap[c.Right] < tierMap[target] {
+		if tierMap[c.Left] < targetTier && tierMap[c.Right] < targetTier {
+			// Calculate tier difference to prioritize combinations with ingredients closer to target tier
+			leftTierDiff := targetTier - tierMap[c.Left]
+			rightTierDiff := targetTier - tierMap[c.Right]
+			avgTierDiff := (leftTierDiff + rightTierDiff) / 2
+			
+			// Add tier difference information to the combination
+			c.Tier = avgTierDiff
 			validCombos = append(validCombos, c)
 		}
 	}
 
+	// Sort combinations by tier difference and complexity
 	sort.SliceStable(validCombos, func(i, j int) bool {
-		return validCombos[i].Left+validCombos[i].Right < validCombos[j].Left+validCombos[j].Right
+		// First sort by tier difference (prefer combinations with ingredients closer to target tier)
+		if validCombos[i].Tier != validCombos[j].Tier {
+			return validCombos[i].Tier < validCombos[j].Tier
+		}
+		// Then sort by complexity
+		return len(validCombos[i].Left)+len(validCombos[i].Right) < len(validCombos[j].Left)+len(validCombos[j].Right)
 	})
 
-	found := make(chan struct{})
+	// Create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second) // Increased timeout for high-tier elements
+	defer cancel()
 
-	for _, comb := range validCombos {
-		wg.Add(1)
-		semaphore <- struct{}{}
+	// Function to explore a single combination
+	exploreCombination := func(c Combination) {
+		defer wg.Done()
+		defer func() { <-semaphore }()
 
-		go func(c Combination) {
-			defer wg.Done()
-			defer func() { <-semaphore }()
-			select {
-			case <-found:
-				return
-			default:
+		// Try variations based on tier difference
+		variations := []struct {
+			left  string
+			right string
+		}{
+			{c.Left, c.Right},
+			{c.Right, c.Left},
+		}
+
+		for _, v := range variations {
+			// Try different combinations for both left and right sides
+			for _, leftComb := range combinations[target] {
+				if tierMap[leftComb.Left] < targetTier && tierMap[leftComb.Right] < targetTier {
+					visited := make(map[string]bool)
+					left := exploreRecipe(v.left, visited, &MultiVisitedCount)
+					if left == nil {
+						continue
+					}
+
+					for _, rightComb := range combinations[target] {
+						if tierMap[rightComb.Left] < targetTier && tierMap[rightComb.Right] < targetTier {
+							rightVisited := copyVisitedMap(visited)
+							right := exploreRecipe(v.right, rightVisited, &MultiVisitedCount)
+							if right == nil {
+								continue
+							}
+
+							// Try both variations of the tree
+							trees := []*Node{
+								{Element: target, Left: left, Right: right},
+								{Element: target, Left: right, Right: left},
+							}
+
+							for _, tree := range trees {
+								signature := serializeTree(tree)
+								if _, ok := seen.LoadOrStore(signature, true); !ok {
+									select {
+									case resultChan <- tree:
+									case <-ctx.Done():
+										return
+									}
+								}
+							}
+						}
+					}
+				}
 			}
-			visited := make(map[string]bool)
-			left := exploreRecipe(c.Left, visited, &MultiVisitedCount)
-			if left == nil {
-				return
-			}
-			right := exploreRecipe(c.Right, visited, &MultiVisitedCount)
-			if right == nil {
-				return
-			}
-			tree := &Node{Element: target, Left: left, Right: right}
-			signature := serializeTree(tree)
-			if _, ok := seen.LoadOrStore(signature, true); !ok {
-				resultChan <- tree
-			}
-		}(comb)
+		}
 	}
 
+	// Launch goroutines for each valid combination
+	for _, comb := range validCombos {
+		select {
+		case <-ctx.Done():
+			break
+		default:
+			wg.Add(1)
+			semaphore <- struct{}{}
+			go exploreCombination(comb)
+		}
+	}
+
+	// Close result channel when all goroutines are done
 	go func() {
 		wg.Wait()
 		close(resultChan)
 	}()
 
+	// Collect results with respect to maxCount
+	results = make([]*Node, 0, maxCount)
 	for recipe := range resultChan {
 		results = append(results, recipe)
 		if len(results) >= maxCount {
-			close(found)
+			cancel()
 			break
 		}
+	}
+
+	// If we found more recipes than requested, randomly select maxCount recipes
+	if len(results) > maxCount {
+		rand.Seed(time.Now().UnixNano())
+		rand.Shuffle(len(results), func(i, j int) {
+			results[i], results[j] = results[j], results[i]
+		})
+		results = results[:maxCount]
 	}
 
 	return results
