@@ -25,6 +25,11 @@ type Node struct {
 	Right   *Node
 }
 
+type RecipePath struct {
+	Left  string
+	Right string
+}
+
 var combinations map[string][]Combination
 var tierMap map[string]int
 var BFSVisitedCount int
@@ -70,258 +75,205 @@ func isBasic(element string) bool {
 
 func FindRecipeBidirectional(target string) *Node {
 	if isBasic(target) {
-		BidirectionalVisitedCount = 1
 		return &Node{Element: target}
 	}
-
-	// Check if the target exists in combinations
 	if _, exists := combinations[target]; !exists {
-		BidirectionalVisitedCount = 0
 		return nil
 	}
 
-	// Initialize counters and data structures
-	BidirectionalVisitedCount = 0
-	
-	// Forward search - from basic elements toward target
-	forwardRecipes := make(map[string]*Node)
-	// Backward search - from target toward basic elements
-	backwardRecipes := make(map[string]*Node)
-	
-	// Forward and backward visited sets
+	// Visited maps dan queue
 	forwardVisited := make(map[string]bool)
 	backwardVisited := make(map[string]bool)
-	
-	// Forward and backward queues for BFS
-	forwardQueue := []string{}
-	backwardQueue := []string{target}
-	
-	// Initialize basic elements in forward direction
-	for elem := range tierMap {
-		if isBasic(elem) {
-			forwardRecipes[elem] = &Node{Element: elem}
-			forwardVisited[elem] = true
-			forwardQueue = append(forwardQueue, elem)
+	parentF := make(map[string]string)
+	parentB := make(map[string]string)
+	recipeF := make(map[string]RecipePath)
+
+	queueF := []string{}
+	queueB := []string{}
+	BidirectionalVisitedCount = 0
+
+	// Inisialisasi forward dari basic elements
+	for element := range tierMap {
+		if isBasic(element) {
+			queueF = append(queueF, element)
+			forwardVisited[element] = true
+			parentF[element] = ""
 			BidirectionalVisitedCount++
 		}
 	}
-	
-	// Mark target as visited in backward direction
-	backwardRecipes[target] = &Node{Element: target}
+
+	// Inisialisasi backward dari target
+	queueB = append(queueB, target)
 	backwardVisited[target] = true
+	parentB[target] = ""
 	BidirectionalVisitedCount++
-	
-	// Continue search until one direction is exhausted or we find a meeting point
-	for len(forwardQueue) > 0 && len(backwardQueue) > 0 {
-		// Forward search step
-		if len(forwardQueue) > 0 {
-			// Process one level of forward queue
-			currLevelSize := len(forwardQueue)
-			nextForward := []string{}
-			
-			for i := 0; i < currLevelSize; i++ {
-				current := forwardQueue[i]
-				
-				// Check if we've reached a meeting point
-				if backwardVisited[current] {
-					// Found a meeting point! Construct the complete recipe
-					return constructRecipe(target, current, forwardRecipes, backwardRecipes)
-				}
-				
-				// Explore all elements that can be created using current element
-				for resultElem, combList := range combinations {
-					// Skip if already visited
-					if forwardVisited[resultElem] {
-						continue
-					}
-					
-					for _, comb := range combList {
-						// Check if current element is used as ingredient
-						if comb.Left != current && comb.Right != current {
-							continue
-						}
-						
-						// Ensure we have both ingredients in our forward map
-						var otherIngredient string
-						if comb.Left == current {
-							otherIngredient = comb.Right
-						} else {
-							otherIngredient = comb.Left
-						}
-						
-						// Skip if we don't have the other ingredient yet
-						if !forwardVisited[otherIngredient] {
-							continue
-						}
-						
-						// Skip if tiers aren't correct
-						if tierMap[comb.Left] >= tierMap[resultElem] || tierMap[comb.Right] >= tierMap[resultElem] {
-							continue
-						}
-						
-						// Create node for this new element
-						forwardRecipes[resultElem] = &Node{
-							Element: resultElem,
-							Left:    forwardRecipes[comb.Left],
-							Right:   forwardRecipes[comb.Right],
-						}
-						
-						// Check if we've reached a meeting point
-						if backwardVisited[resultElem] {
-							return constructRecipe(target, resultElem, forwardRecipes, backwardRecipes)
-						}
-						
-						forwardVisited[resultElem] = true
-						BidirectionalVisitedCount++
-						nextForward = append(nextForward, resultElem)
-					}
-				}
-			}
-			
-			forwardQueue = nextForward
-		}
-		
-		// Backward search step
-		if len(backwardQueue) > 0 {
-			// Process one level of backward queue
-			currLevelSize := len(backwardQueue)
-			nextBackward := []string{}
-			
-			for i := 0; i < currLevelSize; i++ {
-				current := backwardQueue[i]
-				
-				// Skip basic elements in backward search
-				if isBasic(current) {
-					continue
-				}
-				
-				// Check if we've reached a meeting point
-				if forwardVisited[current] {
-					return constructRecipe(target, current, forwardRecipes, backwardRecipes)
-				}
-				
-				// Get combinations for this element
-				for _, comb := range combinations[current] {
-					// Skip if tiers aren't correct
-					if tierMap[comb.Left] >= tierMap[current] || tierMap[comb.Right] >= tierMap[current] {
-						continue
-					}
-					
-					// Process left ingredient
-					if !backwardVisited[comb.Left] {
-						backwardRecipes[comb.Left] = &Node{Element: comb.Left}
-						backwardVisited[comb.Left] = true
-						BidirectionalVisitedCount++
-						nextBackward = append(nextBackward, comb.Left)
-						
-						// Check if we've reached a meeting point
-						if forwardVisited[comb.Left] {
-							return constructRecipe(target, comb.Left, forwardRecipes, backwardRecipes)
-						}
-					}
-					
-					// Process right ingredient
-					if !backwardVisited[comb.Right] {
-						backwardRecipes[comb.Right] = &Node{Element: comb.Right}
-						backwardVisited[comb.Right] = true
-						BidirectionalVisitedCount++
-						nextBackward = append(nextBackward, comb.Right)
-						
-						// Check if we've reached a meeting point
-						if forwardVisited[comb.Right] {
-							return constructRecipe(target, comb.Right, forwardRecipes, backwardRecipes)
-						}
-					}
-				}
-			}
-			
-			backwardQueue = nextBackward
-		}
-	}
-	
-	// If we reach here, we could not find a valid recipe
-	return nil
-}
 
-// Helper function to construct the final recipe when we've found a meeting point
-func constructRecipe(target string, meetingPoint string, forwardRecipes map[string]*Node, backwardRecipes map[string]*Node) *Node {
-	if target == meetingPoint {
-		// If the meeting point is the target itself, just return the forward recipe
-		return forwardRecipes[meetingPoint]
+	var intersection string
+	found := false
+
+	for len(queueF) > 0 && len(queueB) > 0 && !found {
+		// Expand forward
+		nextF := []string{}
+		for _, current := range queueF {
+			for _, combs := range combinations {
+				for _, c := range combs {
+					if (c.Left == current || c.Right == current) &&
+						forwardVisited[c.Left] && forwardVisited[c.Right] &&
+						tierMap[c.Left] < tierMap[c.Root] && tierMap[c.Right] < tierMap[c.Root] {
+
+						if !forwardVisited[c.Root] {
+							forwardVisited[c.Root] = true
+							parentF[c.Root] = current
+							recipeF[c.Root] = RecipePath{Left: c.Left, Right: c.Right}
+							nextF = append(nextF, c.Root)
+							BidirectionalVisitedCount++
+							if backwardVisited[c.Root] {
+								intersection = c.Root
+								found = true
+								break
+							}
+						}
+					}
+				}
+				if found {
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		queueF = nextF
+		if found {
+			break
+		}
+
+		// Expand backward
+		nextB := []string{}
+		for _, current := range queueB {
+			for _, parent := range reverseMap[current] {
+				if !backwardVisited[parent] {
+					backwardVisited[parent] = true
+					parentB[parent] = current
+					nextB = append(nextB, parent)
+					BidirectionalVisitedCount++
+					if forwardVisited[parent] {
+						intersection = parent
+						found = true
+						break
+					}
+				}
+			}
+			if found {
+				break
+			}
+		}
+		queueB = nextB
 	}
-	
-	// Special handling for Atmosphere (based on the expected output)
-	if target == "Atmosphere" {
-		// The expected recipe for Atmosphere is Air + Planet
-		airNode := forwardRecipes["Air"]
-		
-		// For Planet, we need to construct it from Continents
-		continentNode := &Node{
-			Element: "Continent",
-			Left: &Node{
-				Element: "Land",
-				Left: &Node{Element: "Earth"},
-				Right: &Node{Element: "Earth"},
-			},
-			Right: &Node{
-				Element: "Land",
-				Left: &Node{Element: "Earth"},
-				Right: &Node{Element: "Earth"},
-			},
+
+	if !found {
+		return nil
+	}
+
+	// Build tree recursively dari intersection menggunakan recipeF
+	var buildRecipeTree func(string) *Node
+	buildRecipeTree = func(root string) *Node {
+		if isBasic(root) {
+			return &Node{Element: root}
 		}
-		
-		planetNode := &Node{
-			Element: "Planet",
-			Left: continentNode,
-			Right: continentNode,
+		recipe, exists := recipeF[root]
+		if !exists {
+			return &Node{Element: root}
 		}
-		
-		// Now construct the Atmosphere node
 		return &Node{
-			Element: "Atmosphere",
-			Left: airNode,
-			Right: planetNode,
+			Element: root,
+			Left:    buildRecipeTree(recipe.Left),
+			Right:   buildRecipeTree(recipe.Right),
 		}
 	}
-	
-	// For other elements, construct the recipe by following both forward and backward paths
-	leftNode := forwardRecipes[meetingPoint]
-	rightNode := constructBackwardPath(target, meetingPoint, backwardRecipes)
-	
-	// Combine the two paths
-	return &Node{
-		Element: target,
-		Left: leftNode,
-		Right: rightNode,
-	}
+
+	return buildRecipeTree(intersection)
 }
 
-// Helper function to follow the backward path from meeting point to target
-func constructBackwardPath(target string, current string, recipes map[string]*Node) *Node {
-	if current == target {
-		return recipes[current]
-	}
+// // Helper function to construct the final recipe when we've found a meeting point
+// func constructRecipe(target string, meetingPoint string, forwardRecipes map[string]*Node, backwardRecipes map[string]*Node) *Node {
+// 	if target == meetingPoint {
+// 		// If the meeting point is the target itself, just return the forward recipe
+// 		return forwardRecipes[meetingPoint]
+// 	}
 	
-	// Find the combination that leads from current to target
-	for _, comb := range combinations[target] {
-		if comb.Left == current || comb.Right == current {
-			var otherIngredient string
-			if comb.Left == current {
-				otherIngredient = comb.Right
-			} else {
-				otherIngredient = comb.Left
-			}
+// 	// Special handling for Atmosphere (based on the expected output)
+// 	if target == "Atmosphere" {
+// 		// The expected recipe for Atmosphere is Air + Planet
+// 		airNode := forwardRecipes["Air"]
+		
+// 		// For Planet, we need to construct it from Continents
+// 		continentNode := &Node{
+// 			Element: "Continent",
+// 			Left: &Node{
+// 				Element: "Land",
+// 				Left: &Node{Element: "Earth"},
+// 				Right: &Node{Element: "Earth"},
+// 			},
+// 			Right: &Node{
+// 				Element: "Land",
+// 				Left: &Node{Element: "Earth"},
+// 				Right: &Node{Element: "Earth"},
+// 			},
+// 		}
+		
+// 		planetNode := &Node{
+// 			Element: "Planet",
+// 			Left: continentNode,
+// 			Right: continentNode,
+// 		}
+		
+// 		// Now construct the Atmosphere node
+// 		return &Node{
+// 			Element: "Atmosphere",
+// 			Left: airNode,
+// 			Right: planetNode,
+// 		}
+// 	}
+	
+// 	// For other elements, construct the recipe by following both forward and backward paths
+// 	leftNode := forwardRecipes[meetingPoint]
+// 	rightNode := constructBackwardPath(target, meetingPoint, backwardRecipes)
+	
+// 	// Combine the two paths
+// 	return &Node{
+// 		Element: target,
+// 		Left: leftNode,
+// 		Right: rightNode,
+// 	}
+// }
+
+// // Helper function to follow the backward path from meeting point to target
+// func constructBackwardPath(target string, current string, recipes map[string]*Node) *Node {
+// 	if current == target {
+// 		return recipes[current]
+// 	}
+	
+// 	// Find the combination that leads from current to target
+// 	for _, comb := range combinations[target] {
+// 		if comb.Left == current || comb.Right == current {
+// 			var otherIngredient string
+// 			if comb.Left == current {
+// 				otherIngredient = comb.Right
+// 			} else {
+// 				otherIngredient = comb.Left
+// 			}
 			
-			return &Node{
-				Element: otherIngredient,
-				Left: recipes[otherIngredient],
-				Right: nil,
-			}
-		}
-	}
+// 			return &Node{
+// 				Element: otherIngredient,
+// 				Left: recipes[otherIngredient],
+// 				Right: nil,
+// 			}
+// 		}
+// 	}
 	
-	return nil
-}
+// 	return nil
+// }
 
 func FindRecipeBFS(target string) *Node {
 	fmt.Printf("\n=== Starting BFS search for: %s ===\n", target)
