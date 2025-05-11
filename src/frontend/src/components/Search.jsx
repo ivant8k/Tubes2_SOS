@@ -36,6 +36,9 @@ const Search = () => {
       );
 
       if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error(`Element "${searchElement}" not found`);
+        }
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
@@ -110,14 +113,14 @@ const Search = () => {
               <div className="space-y-4">
                 {/* Recipe Selector */}
                 {searchResult.paths.length > 1 && (
-                  <div className="flex gap-2 mb-4">
+                  <div className="flex flex-wrap gap-2 mb-6">
                     {searchResult.paths.map((_, index) => (
                       <button
                         key={index}
                         onClick={() => handleRecipeChange(index)}
-                        className={`px-4 py-2 rounded-lg ${
+                        className={`px-4 py-2 rounded-lg transition-all duration-200 ${
                           selectedRecipeIndex === index
-                            ? 'bg-blue-500 text-white'
+                            ? 'bg-blue-500 text-white shadow-lg scale-105'
                             : 'bg-white/10 text-gray-300 hover:bg-white/20'
                         }`}
                       >
@@ -129,10 +132,12 @@ const Search = () => {
                 
                 {/* Selected Recipe Path */}
                 <div className="space-y-2">
-                  <h3 className="text-lg font-semibold text-white">Path:</h3>
+                  <h3 className="text-lg font-semibold text-white">
+                    {searchResult.paths.length > 1 ? `Recipe ${selectedRecipeIndex + 1} Path:` : 'Path:'}
+                  </h3>
                   <ol className="list-decimal list-inside space-y-1 text-gray-300">
                     {searchResult.paths[selectedRecipeIndex].map((step, index) => (
-                      <li key={index}>
+                      <li key={index} className="hover:bg-white/5 p-1 rounded transition-colors">
                         {step.ingredients[0]} + {step.ingredients[1]} = {step.result}
                       </li>
                     ))}
