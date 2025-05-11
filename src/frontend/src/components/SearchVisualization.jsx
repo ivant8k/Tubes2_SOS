@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
+import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaFastForward, FaUndo } from 'react-icons/fa';
 
 // Helper to build a d3 hierarchy from the solutionPath
 function buildTreeFromPath(solutionPath) {
@@ -72,32 +73,8 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
   useEffect(() => {
     if (!solutionPath || solutionPath.length === 0) return;
     d3.select(svgRef.current).selectAll("*").remove();
-    const width = 1200;
-    const height = 600;
-    const nodeRadius = 24;
-    const margin = { top: 20, right: 90, bottom: 30, left: 90 };
-    const svg = d3.select(svgRef.current)
-      .attr('width', width)
-      .attr('height', height)
-      .attr('viewBox', [0, 0, width, height])
-      .attr('style', 'max-width: 100%; height: auto;');
-    const zoom = d3.zoom()
-      .scaleExtent([0.1, 4])
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform);
-      });
-    svg.call(zoom);
-    const g = svg.append('g')
-      .attr('transform', `translate(${margin.left},${margin.top})`);
-    const treeLayout = d3.tree()
-      .size([height - margin.top - margin.bottom, width - margin.left - margin.right])
-      .separation((a, b) => {
-        if (a.depth === b.depth) {
-          const siblings = a.parent ? a.parent.children.length : 1;
-          return 4 + (siblings * 0.8);
-        }
-        return 1.1;
-      });
+
+    // Calculate max depth for current step
     const buildTreeUpToStep = (step) => {
       const nodeMap = new Map();
       let root = null;
@@ -124,6 +101,43 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
       }
       return root;
     };
+
+    // Helper to get max depth
+    function getMaxDepth(node, depth = 0) {
+      if (!node || !node.children || node.children.length === 0) return depth;
+      return Math.max(...node.children.map(child => getMaxDepth(child, depth + 1)));
+    }
+
+    const rootData = buildTreeUpToStep(currentStep);
+    const maxDepth = getMaxDepth(rootData);
+    const baseHeight = 3000; // Minimum height is now 3000px
+    const perLevelHeight = 180;
+    const height = Math.max(baseHeight, baseHeight + maxDepth * perLevelHeight);
+    const width = 1800;
+    const nodeRadius = 60;
+    const margin = { top: 20, right: 90, bottom: 80, left: 90 };
+    const svg = d3.select(svgRef.current)
+      .attr('width', width)
+      .attr('height', height)
+      .attr('viewBox', [0, 0, width, height])
+      .attr('style', 'max-width: 100%; height: auto;');
+    const zoom = d3.zoom()
+      .scaleExtent([0.1, 4])
+      .on('zoom', (event) => {
+        g.attr('transform', event.transform);
+      });
+    svg.call(zoom);
+    const g = svg.append('g')
+      .attr('transform', `translate(${margin.left},${margin.top})`);
+    const treeLayout = d3.tree()
+      .size([height - margin.top - margin.bottom, width - margin.left - margin.right])
+      .separation((a, b) => {
+        if (a.depth === b.depth) {
+          const siblings = a.parent ? a.parent.children.length : 1;
+          return 8 + (siblings * 1.2);
+        }
+        return 3.5;
+      });
     const updateVisualization = (step) => {
       g.selectAll('.link, .node').remove();
       const root = d3.hierarchy(buildTreeUpToStep(step));
@@ -147,8 +161,12 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
         .attr('class', 'node')
         .attr('transform', d => `translate(${d.y},${d.x})`)
         .style('opacity', 1);
-      nodes.append('circle')
-        .attr('r', nodeRadius)
+      nodes.append('rect')
+        .attr('x', -nodeRadius)
+        .attr('y', -nodeRadius / 1.2)
+        .attr('width', nodeRadius * 2)
+        .attr('height', nodeRadius * 1.7)
+        .attr('rx', 14)
         .attr('fill', d => {
           if (d.depth === 0) return '#22c55e';
           if (d.data.children.length === 0) return '#f3f4f6';
@@ -164,7 +182,7 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
       nodes.append('text')
         .attr('text-anchor', 'middle')
         .attr('dy', '0.35em')
-        .attr('font-size', 14)
+        .attr('font-size', 20)
         .attr('fill', d => {
           if (d.depth === 0) return '#fff';
           if (d.data.children.length === 0) return '#1f2937';
@@ -196,6 +214,12 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
   };
   const handleSpeed = () => {
     setAnimationSpeed((prev) => prev === 1000 ? 500 : prev === 500 ? 2000 : 1000);
+  };
+  const handleEndResult = () => {
+    if (solutionPath && solutionPath.length > 0) {
+      setCurrentStep(solutionPath.length - 1);
+      setIsAnimating(false);
+    }
   };
 
   // Helper function to wrap text
@@ -269,26 +293,76 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
   };
 
   return (
-    <div className="w-full overflow-hidden">
-      <div className="flex items-center gap-2 mb-2">
-        <button onClick={handlePrev} className="px-3 py-1 bg-slate-700 text-white rounded disabled:opacity-50" disabled={currentStep === 0}>
-          Prev
+    <div className="relative">
+      <svg ref={svgRef} className="w-full h-full" />
+      
+      {/* Controls */}
+      <div className="absolute top-4 left-4 flex items-center gap-2 bg-black/50 backdrop-blur-sm p-2 rounded-xl shadow-lg z-10">
+        <div className="text-white text-xs px-2 py-1 border-r border-white/20">
+          Step {currentStep + 1} of {solutionPath?.length || 0}
+        </div>
+        <button
+          onClick={handleReset}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
+          title="Reset"
+        >
+          <FaUndo className="w-3 h-3" />
+          <span>Reset</span>
         </button>
-        <button onClick={handlePlayPause} className="px-3 py-1 bg-green-600 text-white rounded" disabled={!solutionPath || solutionPath.length === 0}>
-          {isAnimating ? 'Pause' : 'Play'}
+        
+        <button
+          onClick={handlePrev}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
+          title="Previous Step"
+        >
+          <FaStepBackward className="w-3 h-3" />
+          <span>Prev</span>
         </button>
-        <button onClick={handleNext} className="px-3 py-1 bg-slate-700 text-white rounded disabled:opacity-50" disabled={!solutionPath || currentStep >= (solutionPath?.length || 1) - 1}>
-          Next
+        
+        <button
+          onClick={handlePlayPause}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-all duration-200 hover:scale-110 text-xs"
+          title={isAnimating ? "Pause" : "Play"}
+        >
+          {isAnimating ? (
+            <>
+              <FaPause className="w-3 h-3" />
+              <span>Pause</span>
+            </>
+          ) : (
+            <>
+              <FaPlay className="w-3 h-3" />
+              <span>Play</span>
+            </>
+          )}
         </button>
-        <button onClick={handleReset} className="px-3 py-1 bg-blue-600 text-white rounded">
-          Reset
+        
+        <button
+          onClick={handleNext}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
+          title="Next Step"
+        >
+          <FaStepForward className="w-3 h-3" />
+          <span>Next</span>
         </button>
-        <button onClick={handleSpeed} className="px-3 py-1 bg-slate-800 text-white rounded">
-          Speed: {animationSpeed}ms
+        
+        <button
+          onClick={handleEndResult}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
+          title="Show Final Result"
+        >
+          <FaFastForward className="w-3 h-3" />
+          <span>End</span>
         </button>
-        <span className="ml-4 text-slate-700 dark:text-slate-200">Step {solutionPath ? currentStep + 1 : 0}/{solutionPath ? solutionPath.length : 0}</span>
+        
+        <button
+          onClick={handleSpeed}
+          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-all duration-200 hover:scale-110 text-xs"
+          title="Change Speed"
+        >
+          <span>{animationSpeed === 1000 ? '1x' : animationSpeed === 500 ? '2x' : '0.5x'}</span>
+        </button>
       </div>
-      <svg ref={svgRef} className="w-full h-[600px]"></svg>
     </div>
   );
 };
