@@ -111,9 +111,9 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
     const rootData = buildTreeUpToStep(currentStep);
     const maxDepth = getMaxDepth(rootData);
     const baseHeight = window.innerWidth < 640 ? 2000 : 3000; // Smaller height for mobile
-    const perLevelHeight = window.innerWidth < 640 ? 120 : 180; // Smaller spacing for mobile
+    const perLevelHeight = window.innerWidth < 640 ? 500 : 700; // Smaller spacing for mobile
     const height = Math.max(baseHeight, baseHeight + maxDepth * perLevelHeight);
-    const width = window.innerWidth < 640 ? 800 : 1800; // Smaller width for mobile
+    const width = window.innerWidth < 640 ? 800 : 3000; // Smaller width for mobile
     const nodeRadius = window.innerWidth < 640 ? 40 : 60; // Smaller nodes for mobile
     const margin = { 
       top: window.innerWidth < 640 ? 10 : 20, 
