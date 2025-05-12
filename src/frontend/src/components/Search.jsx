@@ -40,7 +40,7 @@ const Search = () => {
     setSelectedRecipeIndex(0);
 
     try {
-      const url = new URL('http://localhost:5000/search');
+      const url = process.env.NODE_ENV == 'production' ? new URL(`http://35.202.0.220:5000/search`) : new URL('http://localhost:5000/search');
       url.searchParams.append('element', searchElement);
       url.searchParams.append('mode', searchMode);
       if (searchMode === 'multi') {
