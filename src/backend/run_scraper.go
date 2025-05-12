@@ -1,9 +1,9 @@
-package backend
+package main
 
 import (
-	"littlealchemy/backend"
+	"littlealchemy/Tubes2_SOS/src/backend"
 )
 
 func main() {
-	backend.ScrapeAll()
+	backend.Scraper()
 }
