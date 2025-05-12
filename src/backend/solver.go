@@ -4,12 +4,12 @@ import (
 	//"context"
 	"encoding/json"
 	"fmt"
-	//"math/rand"
+	"math/rand"
 	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
-	//"time"
+	"time"
 )
 
 type Combination struct {
@@ -85,52 +85,61 @@ func getSortedBasicElements() []string {
 }
 
 func FindRecipeBidirectional(target string) *Node {
-    if isBasic(target) {
-        return &Node{Element: target}
-    }
-    if _, exists := combinations[target]; !exists {
-        return nil
-    }
+	if isBasic(target) {
+		return &Node{Element: target}
+	}
+	if _, exists := combinations[target]; !exists {
+		return nil
+	}
 
-    // Forward search (basic → target)
-    forwardVisited := make(map[string]*Node)
-    queueF := getSortedBasicElements()
-    
-    // Backward search (target → basic)
-    backwardVisited := make(map[string]bool)
-    queueB := []string{target}
+	forwardVisited := make(map[string]*Node)
+	queue := []string{}
+	visited := make(map[string]bool)
+	BidirectionalVisitedCount = 0
 
-    // Initialize
-    for _, elem := range queueF {
-        forwardVisited[elem] = &Node{Element: elem}
-    }
-    backwardVisited[target] = true
-    BidirectionalVisitedCount = len(queueF) + 1
+	// Mulai dari elemen basic
+	for elem := range tierMap {
+		if isBasic(elem) {
+			forwardVisited[elem] = &Node{Element: elem}
+			queue = append(queue, elem)
+			visited[elem] = true
+			BidirectionalVisitedCount++
+		}
+	}
 
-    var intersection string
-    found := false
+	// Proses BFS
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
 
-    // Main search loop
-    for len(queueF) > 0 && len(queueB) > 0 && !found {
-        // Forward expansion - build actual recipes
-        queueF, found = expandForwardBuild(queueF, forwardVisited, backwardVisited, &intersection)
-        
-        if !found {
-            // Backward expansion - track dependencies
-            queueB, found = expandBackwardTrack(queueB, backwardVisited, forwardVisited, &intersection)
-        }
-    }
+		for _, comb := range combinations {
+			for _, c := range comb {
+				if (c.Left == current || c.Right == current) &&
+					forwardVisited[c.Left] != nil && forwardVisited[c.Right] != nil &&
+					tierMap[c.Left] < tierMap[c.Root] && tierMap[c.Right] < tierMap[c.Root] {
 
-    if !found {
-        return nil
-    }
+					if _, exists := forwardVisited[c.Root]; !exists {
+						forwardVisited[c.Root] = &Node{
+							Element: c.Root,
+							Left:    forwardVisited[c.Left],
+							Right:   forwardVisited[c.Right],
+						}
+						queue = append(queue, c.Root)
+						visited[c.Root] = true
+						BidirectionalVisitedCount++
 
-    // Return the fully constructed recipe
-    if node, exists := forwardVisited[target]; exists {
-        return node
-    }
-    return constructFromIntersection(intersection, forwardVisited, backwardVisited, target)
+						if c.Root == target {
+							return forwardVisited[c.Root]
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil
 }
+
 
 func expandForwardBuild(queue []string, visited map[string]*Node, otherVisited map[string]bool, intersection *string) ([]string, bool) {
     next := []string{}
@@ -206,8 +215,7 @@ func constructFromIntersection(intersection string, forwardVisited map[string]*N
         
         // Find a valid combination
         for _, comb := range combinations[elem] {
-            if backwardVisited[comb.Left] && backwardVisited[comb.Right] &&
-               tierMap[comb.Left] < tierMap[elem] && tierMap[comb.Right] < tierMap[elem] {
+            if backwardVisited[comb.Left] && backwardVisited[comb.Right] && tierMap[comb.Left] < tierMap[elem] && tierMap[comb.Right] < tierMap[elem] {
                 return &Node{
                     Element: elem,
                     Left:    buildBackward(comb.Left),
@@ -450,144 +458,304 @@ func FindMultipleRecipes(target string, maxCount int) []*Node {
 		atomic.StoreInt32(&MultiVisitedCount, 1)
 		return []*Node{{Element: target}}
 	}
-	
 	if _, exists := combinations[target]; !exists {
 		return nil
 	}
 
 	atomic.StoreInt32(&MultiVisitedCount, 0)
-	
-	// Use mutex for results to avoid race conditions
-	var resultMutex sync.Mutex
 	var results []*Node
-	var seen sync.Map
+	seen := sync.Map{}
+	cache := sync.Map{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 	done := make(chan struct{})
-	
-	// Helper function to add a recipe to results
-	addResult := func(recipe *Node) bool {
-		signature := serializeTree(recipe)
-		if _, loaded := seen.LoadOrStore(signature, true); !loaded {
-			resultMutex.Lock()
-			defer resultMutex.Unlock()
-			
-			if len(results) >= maxCount {
-				return false
-			}
-			
-			results = append(results, recipe)
-			if len(results) >= maxCount {
-				close(done)
-				return false
-			}
-			return true
-		}
-		return true // Continue exploring if duplicate
-	}
-	
-	// Function to find all recipe combinations
-	var findAllRecipes func(string, map[string][]*Node) []*Node
-	findAllRecipes = func(element string, recipeCache map[string][]*Node) []*Node {
-		// Check if we already computed recipes for this element
-		if recipes, found := recipeCache[element]; found {
-			return recipes
-		}
-		
-		// Base case: basic elements
-		if isBasic(element) {
+	//ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	//defer cancel()
+
+	var buildAll func(string) []*Node
+	buildAll = func(elem string) []*Node {
+		if isBasic(elem) {
 			atomic.AddInt32(&MultiVisitedCount, 1)
-			node := &Node{Element: element}
-			recipeCache[element] = []*Node{node}
-			return recipeCache[element]
+			return []*Node{{Element: elem}}
 		}
-		
-		// Find valid combinations
-		var elementRecipes []*Node
-		for _, comb := range combinations[element] {
-			if tierMap[comb.Left] >= tierMap[element] || tierMap[comb.Right] >= tierMap[element] {
-				continue // Skip invalid combinations
-			}
-			
-			// Get all recipes for left and right ingredients
-			leftRecipes := findAllRecipes(comb.Left, recipeCache)
-			if len(leftRecipes) == 0 {
+
+		if val, ok := cache.Load(elem); ok {
+			return val.([]*Node)
+		}
+
+		var nodes []*Node
+		for _, comb := range combinations[elem] {
+			if tierMap[comb.Left] >= tierMap[elem] || tierMap[comb.Right] >= tierMap[elem] {
 				continue
 			}
-			
-			rightRecipes := findAllRecipes(comb.Right, recipeCache)
-			if len(rightRecipes) == 0 {
-				continue
-			}
-			
-			// Create all possible combinations
-			for _, leftRecipe := range leftRecipes {
-				for _, rightRecipe := range rightRecipes {
-					// Check if we need to stop
-					select {
-					case <-done:
-						if len(elementRecipes) > 0 {
-							recipeCache[element] = elementRecipes
-							return elementRecipes
-						}
-						return nil
-					default:
-					}
-					
-					node := &Node{
-						Element: element,
-						Left:    leftRecipe,
-						Right:   rightRecipe,
-					}
-					
-					// For the target element, add to results
-					if element == target {
-						if !addResult(node) {
-							recipeCache[element] = elementRecipes
-							return elementRecipes
+
+			lefts := buildAll(comb.Left)
+			rights := buildAll(comb.Right)
+
+			for _, l := range lefts {
+				for _, r := range rights {
+					node := &Node{Element: elem, Left: l, Right: r}
+					nodes = append(nodes, node)
+
+					if elem == target {
+						sig := serializeTree(node)
+						if _, ok := seen.LoadOrStore(sig, true); !ok {
+							mu.Lock()
+							results = append(results, node)
+							mu.Unlock()
+
+							if len(results) >= maxCount {
+								//cancel()
+								close(done)
+								return nodes
+							}
 						}
 					}
-					
-					elementRecipes = append(elementRecipes, node)
-					atomic.AddInt32(&MultiVisitedCount, 1)
-					
-					// Limit the number of recipes per element to avoid exponential growth
-					if len(elementRecipes) >= maxCount*2 {
-						break
-					}
-				}
-				if len(elementRecipes) >= maxCount*2 {
-					break
 				}
 			}
 		}
-		
-		// Sort recipes by depth for better results
-		sort.Slice(elementRecipes, func(i, j int) bool {
-			return treeDepth(elementRecipes[i]) < treeDepth(elementRecipes[j])
-		})
-		
-		// Limit recipe count to prevent memory issues
-		if len(elementRecipes) > maxCount*2 {
-			elementRecipes = elementRecipes[:maxCount*2]
-		}
-		
-		recipeCache[element] = elementRecipes
-		return elementRecipes
+
+		cache.Store(elem, nodes)
+		return nodes
 	}
-	
-	// Start the recursive exploration with a shared recipe cache
-	recipeCache := make(map[string][]*Node)
-	findAllRecipes(target, recipeCache)
-	
-	// If we have more recipes than requested, sort and truncate
-	if len(results) > maxCount {
-		sort.Slice(results, func(i, j int) bool {
-			return treeDepth(results[i]) < treeDepth(results[j])
-		})
-		results = results[:maxCount]
-	}
-	
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		buildAll(target)
+	}()
+
+	wg.Wait()
 	return results
 }
+
+
+func exploreRecipe(target string, visited map[string]bool, counter *int32) *Node {
+	if isBasic(target) {
+		atomic.AddInt32(counter, 1)
+		return &Node{Element: target}
+	}
+	if visited[target] {
+		return nil
+	}
+	visited[target] = true
+	atomic.AddInt32(counter, 1)
+
+	var candidates []*Node
+	validCombos := []Combination{}
+
+	targetTier := tierMap[target]
+
+	// Filter and sort combinations by tier difference
+	for _, comb := range combinations[target] {
+		if tierMap[comb.Left] < targetTier && tierMap[comb.Right] < targetTier {
+			leftTierDiff := targetTier - tierMap[comb.Left]
+			rightTierDiff := targetTier - tierMap[comb.Right]
+			avgTierDiff := (leftTierDiff + rightTierDiff) / 2
+			comb.Tier = avgTierDiff
+			validCombos = append(validCombos, comb)
+		}
+	}
+
+	// Sort combinations by tier difference and complexity
+	sort.SliceStable(validCombos, func(i, j int) bool {
+		if validCombos[i].Tier != validCombos[j].Tier {
+			return validCombos[i].Tier < validCombos[j].Tier
+		}
+		return len(validCombos[i].Left)+len(validCombos[i].Right) < len(validCombos[j].Left)+len(validCombos[j].Right)
+	})
+
+	// Try all valid combinations
+	for _, comb := range validCombos {
+		variations := []struct {
+			left  string
+			right string
+		}{
+			{comb.Left, comb.Right},
+			{comb.Right, comb.Left},
+		}
+
+		for _, v := range variations {
+			leftVisited := copyVisitedMap(visited)
+			left := exploreRecipe(v.left, leftVisited, counter)
+			if left == nil {
+				continue
+			}
+
+			rightVisited := copyVisitedMap(visited)
+			right := exploreRecipe(v.right, rightVisited, counter)
+			if right == nil {
+				continue
+			}
+
+			candidates = append(candidates,
+				&Node{Element: target, Left: left, Right: right},
+				&Node{Element: target, Left: right, Right: left},
+			)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Return a random candidate to increase variety
+	rand.Seed(time.Now().UnixNano())
+	return candidates[rand.Intn(len(candidates))]
+}
+
+func copyVisitedMap(original map[string]bool) map[string]bool {
+	copy := make(map[string]bool)
+	for k, v := range original {
+		copy[k] = v
+	}
+	return copy
+}
+
+
+// func FindMultipleRecipes(target string, maxCount int) []*Node {
+// 	if isBasic(target) {
+// 		atomic.StoreInt32(&MultiVisitedCount, 1)
+// 		return []*Node{{Element: target}}
+// 	}
+	
+// 	if _, exists := combinations[target]; !exists {
+// 		return nil
+// 	}
+
+// 	atomic.StoreInt32(&MultiVisitedCount, 0)
+	
+// 	// Use mutex for results to avoid race conditions
+// 	var resultMutex sync.Mutex
+// 	var results []*Node
+// 	var seen sync.Map
+// 	done := make(chan struct{})
+	
+// 	// Helper function to add a recipe to results
+// 	addResult := func(recipe *Node) bool {
+// 		signature := serializeTree(recipe)
+// 		if _, loaded := seen.LoadOrStore(signature, true); !loaded {
+// 			resultMutex.Lock()
+// 			defer resultMutex.Unlock()
+			
+// 			if len(results) >= maxCount {
+// 				return false
+// 			}
+			
+// 			results = append(results, recipe)
+// 			if len(results) >= maxCount {
+// 				close(done)
+// 				return false
+// 			}
+// 			return true
+// 		}
+// 		return true // Continue exploring if duplicate
+// 	}
+	
+// 	// Function to find all recipe combinations
+// 	var findAllRecipes func(string, map[string][]*Node) []*Node
+// 	findAllRecipes = func(element string, recipeCache map[string][]*Node) []*Node {
+// 		// Check if we already computed recipes for this element
+// 		if recipes, found := recipeCache[element]; found {
+// 			return recipes
+// 		}
+		
+// 		// Base case: basic elements
+// 		if isBasic(element) {
+// 			atomic.AddInt32(&MultiVisitedCount, 1)
+// 			node := &Node{Element: element}
+// 			recipeCache[element] = []*Node{node}
+// 			return recipeCache[element]
+// 		}
+		
+// 		// Find valid combinations
+// 		var elementRecipes []*Node
+// 		for _, comb := range combinations[element] {
+// 			if tierMap[comb.Left] >= tierMap[element] || tierMap[comb.Right] >= tierMap[element] {
+// 				continue // Skip invalid combinations
+// 			}
+			
+// 			// Get all recipes for left and right ingredients
+// 			leftRecipes := findAllRecipes(comb.Left, recipeCache)
+// 			if len(leftRecipes) == 0 {
+// 				continue
+// 			}
+			
+// 			rightRecipes := findAllRecipes(comb.Right, recipeCache)
+// 			if len(rightRecipes) == 0 {
+// 				continue
+// 			}
+			
+// 			// Create all possible combinations
+// 			for _, leftRecipe := range leftRecipes {
+// 				for _, rightRecipe := range rightRecipes {
+// 					// Check if we need to stop
+// 					select {
+// 					case <-done:
+// 						if len(elementRecipes) > 0 {
+// 							recipeCache[element] = elementRecipes
+// 							return elementRecipes
+// 						}
+// 						return nil
+// 					default:
+// 					}
+					
+// 					node := &Node{
+// 						Element: element,
+// 						Left:    leftRecipe,
+// 						Right:   rightRecipe,
+// 					}
+					
+// 					// For the target element, add to results
+// 					if element == target {
+// 						if !addResult(node) {
+// 							recipeCache[element] = elementRecipes
+// 							return elementRecipes
+// 						}
+// 					}
+					
+// 					elementRecipes = append(elementRecipes, node)
+// 					atomic.AddInt32(&MultiVisitedCount, 1)
+					
+// 					// Limit the number of recipes per element to avoid exponential growth
+// 					if len(elementRecipes) >= maxCount*2 {
+// 						break
+// 					}
+// 				}
+// 				if len(elementRecipes) >= maxCount*2 {
+// 					break
+// 				}
+// 			}
+// 		}
+		
+// 		// Sort recipes by depth for better results
+// 		sort.Slice(elementRecipes, func(i, j int) bool {
+// 			return treeDepth(elementRecipes[i]) < treeDepth(elementRecipes[j])
+// 		})
+		
+// 		// Limit recipe count to prevent memory issues
+// 		if len(elementRecipes) > maxCount*2 {
+// 			elementRecipes = elementRecipes[:maxCount*2]
+// 		}
+		
+// 		recipeCache[element] = elementRecipes
+// 		return elementRecipes
+// 	}
+	
+// 	// Start the recursive exploration with a shared recipe cache
+// 	recipeCache := make(map[string][]*Node)
+// 	findAllRecipes(target, recipeCache)
+	
+// 	// If we have more recipes than requested, sort and truncate
+// 	if len(results) > maxCount {
+// 		sort.Slice(results, func(i, j int) bool {
+// 			return treeDepth(results[i]) < treeDepth(results[j])
+// 		})
+// 		results = results[:maxCount]
+// 	}
+	
+// 	return results
+// }
 
 // // Helper function to find multiple variations of recipes for an element
 // func exploreRecipeVariations(target string, visited map[string]bool, counter *int32, ctx context.Context, seen *sync.Map, resultChan chan<- *Node) *Node {
