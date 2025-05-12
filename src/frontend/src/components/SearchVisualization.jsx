@@ -103,9 +103,11 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
     };
 
     // Helper to get max depth
-    function getMaxDepth(node, depth = 0) {
+    function getMaxDepth(node, depth = 0, visited = new Set()) {
       if (!node || !node.children || node.children.length === 0) return depth;
-      return Math.max(...node.children.map(child => getMaxDepth(child, depth + 1)));
+      if (visited.has(node.name)) return depth; // Prevent cycles
+      visited.add(node.name);
+      return Math.max(...node.children.map(child => getMaxDepth(child, depth + 1, visited)));
     }
 
     const rootData = buildTreeUpToStep(currentStep);
