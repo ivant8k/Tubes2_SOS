@@ -1,50 +1,321 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import * as d3 from 'd3';
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  useNodesState,
+  useEdgesState,
+  Position,
+  MarkerType,
+  BaseEdge,
+  getStraightPath,
+  Handle,
+} from '@xyflow/react';
+import { motion, AnimatePresence } from 'framer-motion';
+import '@xyflow/react/dist/style.css';
 import { FaPlay, FaPause, FaStepBackward, FaStepForward, FaFastForward, FaUndo } from 'react-icons/fa';
 
-// Helper to build a d3 hierarchy from the solutionPath
-function buildTreeFromPath(solutionPath) {
-  if (!solutionPath || solutionPath.length === 0) return null;
-  const resultNodeMap = new Map();
+// Custom node component with animation
+const CustomNode = ({ data }) => {
+  // Modern, minimal, dark theme node style
+  let bgColor = 'bg-gray-800';
+  let borderColor = 'border-gray-600';
+  let textColor = 'text-white';
+  if (data.isRoot) {
+    bgColor = 'bg-gray-800';
+    borderColor = 'border-green-500';
+    textColor = 'text-green-300';
+  } else if (data.isLeaf) {
+    bgColor = 'bg-gray-900';
+    borderColor = 'border-gray-700';
+    textColor = 'text-gray-200';
+  } else {
+    bgColor = 'bg-gray-700';
+    borderColor = 'border-blue-700';
+    textColor = 'text-blue-200';
+  }
+  return (
+    <motion.div
+      initial={{ scale: 0, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ duration: 0.5, type: "spring" }}
+      className={`px-4 py-2 rounded-xl shadow-md border ${bgColor} ${borderColor} ${textColor} font-medium`}
+      style={{
+        minWidth: '120px',
+        textAlign: 'center',
+        borderWidth: 2,
+      }}
+    >
+      {/* Source handle for outgoing edges (ATAS) */}
+      <Handle 
+        type="source" 
+        position={Position.Top} 
+        id="top"
+        style={{ 
+          background: '#3b82f6',
+          width: 8,
+          height: 8,
+          top: -4
+        }}
+      />
+      <div className="font-semibold text-base">{data.label}</div>
+      <div className="text-xs opacity-80">Tier {data.tier}</div>
+      {/* Target handle for incoming edges (BAWAH) */}
+      <Handle 
+        type="target" 
+        position={Position.Bottom} 
+        id="bottom"
+        style={{ 
+          background: '#3b82f6',
+          width: 8,
+          height: 8,
+          bottom: -4
+        }}
+      />
+    </motion.div>
+  );
+};
 
-  // First, create all result nodes
-  solutionPath.forEach((step) => {
-    if (!resultNodeMap.has(step.result)) {
-      resultNodeMap.set(step.result, { name: step.result, children: [] });
-    }
+// Custom edge component
+const CustomEdge = ({ id, sourceX, sourceY, targetX, targetY, sourceHandleId, targetHandleId }) => {
+  const [edgePath] = getStraightPath({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
   });
 
-  // Then, link children (ingredients are always new nodes)
-  solutionPath.forEach((step) => {
-    const resultNode = resultNodeMap.get(step.result);
-    step.ingredients.forEach((ingredient, i) => {
-      // If both ingredients are the same, create two separate nodes
-      let ingredientName = ingredient;
-      if (step.ingredients[0] === step.ingredients[1]) {
-        ingredientName = `${ingredient} (${i + 1})`;
-      }
-      // If this ingredient is also a result in another step, link to that node
-      const ingredientNode = resultNodeMap.has(ingredient)
-        ? resultNodeMap.get(ingredient)
-        : { name: ingredientName, children: [] };
-      resultNode.children.push(ingredientNode);
-    });
-  });
+  return (
+    <BaseEdge
+      path={edgePath}
+      style={{ stroke: '#3b82f6', strokeWidth: 2 }}
+      markerEnd={{
+        type: MarkerType.ArrowClosed,
+        color: '#3b82f6',
+        width: 16,
+        height: 16,
+      }}
+    />
+  );
+};
 
-  // The last step's result is the root
-  const root = resultNodeMap.get(solutionPath[solutionPath.length - 1].result);
-  return d3.hierarchy(root);
-}
+const nodeTypes = {
+  custom: CustomNode,
+};
+
+const edgeTypes = {
+  custom: CustomEdge,
+};
+
+const defaultEdgeOptions = {
+  type: 'smoothstep',
+  animated: false,
+  style: { stroke: 'blue', strokeWidth: 4 },
+  markerEnd: {
+    type: MarkerType.ArrowClosed,
+    color: 'blue',
+    width: 16,
+    height: 16,
+  },
+};
 
 const SearchVisualization = ({ element, mode, solutionPath }) => {
-  const svgRef = useRef(null);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [currentStep, setCurrentStep] = useState(0);
   const [isAnimating, setIsAnimating] = useState(false);
-  const [animationSpeed, setAnimationSpeed] = useState(1000); // ms per step
+  const [animationSpeed, setAnimationSpeed] = useState(1000);
 
-  // Animation interval effect
+  // Replace the buildGraph function with a tree layout
+  const buildGraph = useCallback((step) => {
+    if (!solutionPath || solutionPath.length === 0) return { nodes: [], edges: [] };
+
+    // Helper to get node key for a level occurrence
+    function getNodeKey(element, tier, depth, idx) {
+      return `${element}-${tier}-${depth}-${idx}`;
+    }
+
+    // Build a map from result to its step index for quick lookup
+    const resultStepMap = {};
+    for (let i = 0; i <= step; i++) {
+      resultStepMap[solutionPath[i].result] = i;
+    }
+
+    // --- BFS Layout (default, horizontal spread per level) ---
+    function buildBFS() {
+      const nodeMap = new Map();
+      const edgeList = [];
+      let globalX = 0;
+      function traverse(result, tier, depth) {
+        const i = resultStepMap[result];
+        let children = [];
+        if (i !== undefined) {
+          const { ingredients, tiers } = solutionPath[i];
+          const [left, right] = ingredients;
+          const leftTier = tiers.left;
+          const rightTier = tiers.right;
+          const leftKey = traverse(left, leftTier, depth + 1);
+          const rightKey = traverse(right, rightTier, depth + 1);
+          children = [leftKey, rightKey];
+        }
+        const idx = Array.from(nodeMap.values()).filter(n => n.label === result && n.tier === tier && n.depth === depth).length;
+        const nodeKey = getNodeKey(result, tier, depth, idx);
+        if (nodeMap.has(nodeKey)) return nodeKey;
+        let x;
+        if (children.length === 0) {
+          x = globalX++;
+        } else {
+          const childXs = children.map(childKey => nodeMap.get(childKey).x);
+          x = (Math.min(...childXs) + Math.max(...childXs)) / 2;
+        }
+        nodeMap.set(nodeKey, {
+          id: nodeKey,
+          label: result,
+          tier: tier,
+          depth: depth,
+          x,
+          y: depth,
+          isRoot: depth === 0,
+          isLeaf: children.length === 0,
+        });
+        children.forEach(childKey => {
+          edgeList.push({
+            id: `e-${childKey}-${nodeKey}`,
+            source: childKey,
+            target: nodeKey,
+            type: 'custom',
+            animated: false,
+            style: { stroke: '#3b82f6', strokeWidth: 2 },
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              color: '#3b82f6',
+              width: 16,
+              height: 16,
+            },
+            sourceHandle: 'top',
+            targetHandle: 'bottom',
+          });
+        });
+        return nodeKey;
+      }
+      const lastStep = solutionPath[step];
+      traverse(lastStep.result, lastStep.tiers.result, 0);
+      return { nodeMap, edgeList };
+    }
+
+    // --- DFS Layout (vertical/deep, child directly below parent) ---
+    function buildDFS() {
+      const nodeMap = new Map();
+      const edgeList = [];
+      let globalX = 0;
+      function traverse(result, tier, depth) {
+        const i = resultStepMap[result];
+        let children = [];
+        if (i !== undefined) {
+          const { ingredients, tiers } = solutionPath[i];
+          const [left, right] = ingredients;
+          const leftTier = tiers.left;
+          const rightTier = tiers.right;
+          const leftKey = traverse(left, leftTier, depth + 1);
+          const rightKey = traverse(right, rightTier, depth + 1);
+          children = [leftKey, rightKey];
+        }
+        const idx = Array.from(nodeMap.values()).filter(n => n.label === result && n.tier === tier && n.depth === depth).length;
+        const nodeKey = getNodeKey(result, tier, depth, idx);
+        if (nodeMap.has(nodeKey)) return nodeKey;
+        let x;
+        if (children.length === 0) {
+          x = globalX++;
+        } else {
+          const childXs = children.map(childKey => nodeMap.get(childKey).x);
+          x = (Math.min(...childXs) + Math.max(...childXs)) / 2;
+        }
+        nodeMap.set(nodeKey, {
+          id: nodeKey,
+          label: result,
+          tier: tier,
+          depth: depth,
+          x,
+          y: depth,
+          isRoot: depth === 0,
+          isLeaf: children.length === 0,
+        });
+        children.forEach(childKey => {
+          edgeList.push({
+            id: `e-${childKey}-${nodeKey}`,
+            source: childKey,
+            target: nodeKey,
+            type: 'custom',
+            animated: false,
+            style: { stroke: '#3b82f6', strokeWidth: 2 },
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              color: '#3b82f6',
+              width: 16,
+              height: 16,
+            },
+            sourceHandle: 'top',
+            targetHandle: 'bottom',
+          });
+        });
+        return nodeKey;
+      }
+      const lastStep = solutionPath[step];
+      traverse(lastStep.result, lastStep.tiers.result, 0);
+      return { nodeMap, edgeList };
+    }
+
+    // --- Bidirectional Layout (two trees meeting at a frontier node) ---
+    function buildBidirectional() {
+      // For simplicity, treat as BFS for now, but can be extended to two trees
+      return buildBFS();
+    }
+
+    // --- Select layout based on mode ---
+    let nodeMap, edgeList;
+    if (mode === 'dfs') {
+      ({ nodeMap, edgeList } = buildDFS());
+    } else if (mode === 'bidirectional') {
+      ({ nodeMap, edgeList } = buildBidirectional());
+    } else {
+      ({ nodeMap, edgeList } = buildBFS());
+    }
+    const nodes = Array.from(nodeMap.values()).map(node => ({
+      id: node.id,
+      type: 'custom',
+      position: {
+        x: node.x * 180,
+        y: node.y * 120,
+      },
+      data: {
+        label: node.label,
+        tier: node.tier,
+        isRoot: node.isRoot,
+        isLeaf: node.isLeaf,
+      },
+      sourcePosition: Position.Top,
+      targetPosition: Position.Bottom,
+    }));
+    const edges = edgeList.map(e => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      type: 'custom',
+      animated: false,
+      style: { stroke: '#3b82f6', strokeWidth: 2 },
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: '#3b82f6',
+        width: 16,
+        height: 16,
+      },
+    }));
+    return { nodes, edges };
+  }, [solutionPath, mode]);
+
+  // Animation effect
   useEffect(() => {
     if (!isAnimating) return;
     if (!solutionPath || solutionPath.length === 0) return;
@@ -52,6 +323,7 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
       setIsAnimating(false);
       return;
     }
+
     const interval = setInterval(() => {
       setCurrentStep(prev => {
         if (prev >= solutionPath.length - 1) {
@@ -61,8 +333,105 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
         return prev + 1;
       });
     }, animationSpeed);
+
     return () => clearInterval(interval);
   }, [isAnimating, animationSpeed, currentStep, solutionPath]);
+
+  // Helper to get nodes/edges up to currentStep, step-by-step by solutionPath
+  function getStepwiseTree(solutionPath, buildGraph, currentStep) {
+    // Always build the full tree for layout
+    const { nodes: fullNodes, edges: fullEdges } = buildGraph(solutionPath.length - 1);
+    // Accumulate nodes/edges by traversing solutionPath steps
+    const unlockedNodeIds = new Set();
+    const unlockedEdgeIds = new Set();
+    
+    // Keep track of which nodes are used as ingredients
+    const ingredientNodeMap = new Map();
+    
+    // For step 0, only show basic elements (tier 0)
+    if (currentStep === 0) {
+      fullNodes.forEach(node => {
+        if (node.data.tier === 0) {
+          unlockedNodeIds.add(node.id);
+        }
+      });
+      return { 
+        nodes: fullNodes.filter(n => unlockedNodeIds.has(n.id)), 
+        edges: [] 
+      };
+    }
+    
+    for (let i = 0; i <= currentStep; i++) {
+      const step = solutionPath[i];
+      if (!step) continue;
+      
+      // Add result node
+      const resultNode = fullNodes.find(n => n.data.label === step.result);
+      if (resultNode) {
+        unlockedNodeIds.add(resultNode.id);
+        
+        // Add all edges that connect to this result node
+        fullEdges.forEach(edge => {
+          if (edge.target === resultNode.id) {
+            unlockedEdgeIds.add(edge.id);
+            // Also add the source node of this edge
+            unlockedNodeIds.add(edge.source);
+          }
+        });
+      }
+      
+      // Add ingredient nodes and track their usage
+      step.ingredients.forEach((ingredient, idx) => {
+        // Find all nodes with this ingredient label
+        const ingredientNodes = fullNodes.filter(n => n.data.label === ingredient);
+        
+        // For each ingredient node, check if it's already been used
+        ingredientNodes.forEach(node => {
+          const key = `${node.id}-${i}`; // Unique key for this step
+          if (!ingredientNodeMap.has(key)) {
+            ingredientNodeMap.set(key, true);
+            unlockedNodeIds.add(node.id);
+            
+            // Add all edges from this ingredient node
+            fullEdges.forEach(edge => {
+              if (edge.source === node.id) {
+                unlockedEdgeIds.add(edge.id);
+                // Also add the target node of this edge
+                unlockedNodeIds.add(edge.target);
+              }
+            });
+          }
+        });
+      });
+    }
+    
+    // Filter full tree to only show unlocked nodes/edges
+    const visibleNodes = fullNodes.filter(n => unlockedNodeIds.has(n.id));
+    const visibleEdges = fullEdges.filter(e => unlockedEdgeIds.has(e.id));
+    
+    // Double check that all visible nodes have their corresponding edges
+    visibleNodes.forEach(node => {
+      fullEdges.forEach(edge => {
+        if ((edge.source === node.id || edge.target === node.id) && 
+            unlockedNodeIds.has(edge.source) && 
+            unlockedNodeIds.has(edge.target)) {
+          unlockedEdgeIds.add(edge.id);
+        }
+      });
+    });
+    
+    return { 
+      nodes: visibleNodes, 
+      edges: fullEdges.filter(e => unlockedEdgeIds.has(e.id))
+    };
+  }
+
+  // Update visualization when step changes (step-by-step by solutionPath)
+  useEffect(() => {
+    const { nodes: visibleNodes, edges: visibleEdges } = getStepwiseTree(solutionPath, buildGraph, currentStep);
+    setNodes(visibleNodes);
+    setEdges(visibleEdges);
+  }, [currentStep, buildGraph, setNodes, setEdges, solutionPath]);
 
   // Reset animation when solutionPath changes
   useEffect(() => {
@@ -70,204 +439,22 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
     setIsAnimating(false);
   }, [solutionPath]);
 
-  useEffect(() => {
-    if (!solutionPath || solutionPath.length === 0) return;
-    d3.select(svgRef.current).selectAll("*").remove();
-
-    // Calculate max depth for current step
-    const buildTreeUpToStep = (step) => {
-      const nodeMap = new Map();
-      let root = null;
-      for (let i = 0; i <= step; i++) {
-        const step = solutionPath[i];
-        const result = step.result;
-        const [left, right] = step.ingredients;
-        if (!nodeMap.has(result)) {
-          nodeMap.set(result, { name: result, children: [] });
-        }
-        if (!nodeMap.has(left)) {
-          nodeMap.set(left, { name: left, children: [] });
-        }
-        if (!nodeMap.has(right)) {
-          nodeMap.set(right, { name: right, children: [] });
-        }
-        const resultNode = nodeMap.get(result);
-        const leftNode = nodeMap.get(left);
-        const rightNode = nodeMap.get(right);
-        resultNode.children = [];
-        resultNode.children.push(leftNode);
-        resultNode.children.push(rightNode);
-        root = resultNode;
-      }
-      return root;
-    };
-
-    // Helper to get max depth
-    function getMaxDepth(node, depth = 0, visited = new Set()) {
-      if (!node || !node.children || node.children.length === 0) return depth;
-      if (visited.has(node.name)) return depth; // Prevent cycles
-      visited.add(node.name);
-      return Math.max(...node.children.map(child => getMaxDepth(child, depth + 1, visited)));
-    }
-
-    const rootData = buildTreeUpToStep(currentStep);
-    const maxDepth = getMaxDepth(rootData);
-    const baseHeight = window.innerWidth < 640 ? 2000 : 3000; // Smaller height for mobile
-    const perLevelHeight = window.innerWidth < 640 ? 500 : 700; // Smaller spacing for mobile
-    const height = Math.max(baseHeight, baseHeight + maxDepth * perLevelHeight);
-    const width = window.innerWidth < 640 ? 800 : 3000; // Smaller width for mobile
-    const nodeRadius = window.innerWidth < 640 ? 40 : 60; // Smaller nodes for mobile
-    const margin = { 
-      top: window.innerWidth < 640 ? 10 : 20, 
-      right: window.innerWidth < 640 ? 45 : 90, 
-      bottom: window.innerWidth < 640 ? 40 : 80, 
-      left: window.innerWidth < 640 ? 45 : 90 
-    };
-    const svg = d3.select(svgRef.current)
-      .attr('width', width)
-      .attr('height', height)
-      .attr('viewBox', [0, 0, width, height])
-      .attr('style', 'max-width: 100%; height: auto;');
-    const zoom = d3.zoom()
-      .scaleExtent([0.1, 4])
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform);
-      });
-    svg.call(zoom);
-    const g = svg.append('g')
-      .attr('transform', `translate(${margin.left},${margin.top})`);
-    const treeLayout = d3.tree()
-      .size([height - margin.top - margin.bottom, width - margin.left - margin.right])
-      .separation((a, b) => {
-        if (a.depth === b.depth) {
-          const siblings = a.parent ? a.parent.children.length : 1;
-          return 8 + (siblings * 1.2);
-        }
-        return 3.5;
-      });
-    const updateVisualization = (step) => {
-      g.selectAll('.link, .node').remove();
-      const root = d3.hierarchy(buildTreeUpToStep(step));
-      const treeData = treeLayout(root);
-      g.selectAll('.link')
-        .data(treeData.links())
-        .enter()
-        .append('path')
-        .attr('class', 'link')
-        .attr('fill', 'none')
-        .attr('stroke', '#22c55e')
-        .attr('stroke-width', 2)
-        .attr('stroke-opacity', 0.6)
-        .attr('d', d3.linkHorizontal()
-          .x(d => d.y)
-          .y(d => d.x));
-      const nodes = g.selectAll('.node')
-        .data(treeData.descendants())
-        .enter()
-        .append('g')
-        .attr('class', 'node')
-        .attr('transform', d => `translate(${d.y},${d.x})`)
-        .style('opacity', 1);
-      nodes.append('rect')
-        .attr('x', -nodeRadius)
-        .attr('y', -nodeRadius / 1.2)
-        .attr('width', nodeRadius * 2)
-        .attr('height', nodeRadius * 1.7)
-        .attr('rx', 14)
-        .attr('fill', d => {
-          if (d.depth === 0) return '#22c55e';
-          if (d.data.children.length === 0) return '#f3f4f6';
-          return '#6366f1';
-        })
-        .attr('stroke', d => {
-          if (d.depth === 0) return '#16a34a';
-          if (d.data.children.length === 0) return '#9ca3af';
-          return '#4f46e5';
-        })
-        .attr('stroke-width', d => d.depth === 0 ? 3 : 2)
-        .attr('stroke-opacity', 0.8);
-
-      // Update text size based on screen width
-      const fontSize = window.innerWidth < 640 ? 14 : 20;
-      const tierFontSize = window.innerWidth < 640 ? 10 : 12;
-
-      // Add element name
-      nodes.append('text')
-        .attr('text-anchor', 'middle')
-        .attr('dy', '-0.2em')
-        .attr('font-size', fontSize)
-        .attr('fill', d => {
-          if (d.depth === 0) return '#fff';
-          if (d.data.children.length === 0) return '#1f2937';
-          return '#fff';
-        })
-        .text(d => d.data.name)
-        .style('opacity', 1);
-
-      // Add tier information
-      nodes.append('text')
-        .attr('text-anchor', 'middle')
-        .attr('dy', '1em')
-        .attr('font-size', tierFontSize)
-        .attr('fill', d => {
-          if (d.depth === 0) return '#fff';
-          if (d.data.children.length === 0) return '#1f2937';
-          return '#fff';
-        })
-        .text(d => {
-          const step = solutionPath.find(s => s.result === d.data.name);
-          if (step) {
-            return `Tier ${step.tiers.result}`;
-          }
-          // For leaf nodes, find their tier from the ingredients
-          const ingredientStep = solutionPath.find(s => 
-            s.ingredients.includes(d.data.name)
-          );
-          if (ingredientStep) {
-            const index = ingredientStep.ingredients.indexOf(d.data.name);
-            return `Tier ${index === 0 ? ingredientStep.tiers.left : ingredientStep.tiers.right}`;
-          }
-          return '';
-        })
-        .style('opacity', 0.8);
-
-      nodes.append('title')
-        .text(d => {
-          const step = solutionPath.find(s => s.result === d.data.name);
-          if (step) {
-            return `${d.data.name} (Tier ${step.tiers.result})`;
-          }
-          const ingredientStep = solutionPath.find(s => 
-            s.ingredients.includes(d.data.name)
-          );
-          if (ingredientStep) {
-            const index = ingredientStep.ingredients.indexOf(d.data.name);
-            return `${d.data.name} (Tier ${index === 0 ? ingredientStep.tiers.left : ingredientStep.tiers.right})`;
-          }
-          return d.data.name;
-        });
-    };
-    updateVisualization(currentStep);
-  }, [element, mode, solutionPath, currentStep, animationSpeed]);
-
-  // React-based controls
-  const handlePlayPause = () => {
-    setIsAnimating((prev) => !prev);
-  };
+  // Control handlers
+  const handlePlayPause = () => setIsAnimating(prev => !prev);
   const handleReset = () => {
     setCurrentStep(0);
     setIsAnimating(false);
   };
   const handleNext = () => {
-    setCurrentStep((prev) => Math.min(prev + 1, (solutionPath?.length || 1) - 1));
+    setCurrentStep(prev => Math.min(prev + 1, (solutionPath?.length || 1) - 1));
     setIsAnimating(false);
   };
   const handlePrev = () => {
-    setCurrentStep((prev) => Math.max(prev - 1, 0));
+    setCurrentStep(prev => Math.max(prev - 1, 0));
     setIsAnimating(false);
   };
   const handleSpeed = () => {
-    setAnimationSpeed((prev) => prev === 1000 ? 500 : prev === 500 ? 2000 : 1000);
+    setAnimationSpeed(prev => prev === 1000 ? 500 : prev === 500 ? 2000 : 1000);
   };
   const handleEndResult = () => {
     if (solutionPath && solutionPath.length > 0) {
@@ -276,79 +463,23 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
     }
   };
 
-  // Helper function to wrap text
-  function wrap(text, width) {
-    text.each(function() {
-      const text = d3.select(this);
-      const words = text.text().split(/\s+/).reverse();
-      let word;
-      let line = [];
-      let lineNumber = 0;
-      const lineHeight = 1.1;
-      const y = text.attr('y');
-      const dy = parseFloat(text.attr('dy'));
-      let tspan = text.text(null).append('tspan').attr('x', 0).attr('y', y).attr('dy', dy + 'em');
-      
-      while (word = words.pop()) {
-        line.push(word);
-        tspan.text(line.join(' '));
-        if (tspan.node().getComputedTextLength() > width) {
-          line.pop();
-          tspan.text(line.join(' '));
-          line = [word];
-          tspan = text.append('tspan').attr('x', 0).attr('y', y).attr('dy', ++lineNumber * lineHeight + dy + 'em').text(word);
-        }
-      }
-    });
-  }
-
-  const buildTree = (path) => {
-    const nodeMap = new Map();
-    let root = null;
-
-    // First pass: Create all nodes
-    path.forEach(step => {
-      const result = step.result;
-      const [left, right] = step.ingredients;
-
-      // Create nodes if they don't exist
-      if (!nodeMap.has(result)) {
-        nodeMap.set(result, { name: result, children: [] });
-      }
-      if (!nodeMap.has(left)) {
-        nodeMap.set(left, { name: left, children: [] });
-      }
-      if (!nodeMap.has(right)) {
-        nodeMap.set(right, { name: right, children: [] });
-      }
-    });
-
-    // Second pass: Connect nodes
-    path.forEach(step => {
-      const result = step.result;
-      const [left, right] = step.ingredients;
-
-      const resultNode = nodeMap.get(result);
-      const leftNode = nodeMap.get(left);
-      const rightNode = nodeMap.get(right);
-
-      // Clear existing children to avoid duplicates
-      resultNode.children = [];
-
-      // Add children in the correct order
-      resultNode.children.push(leftNode);
-      resultNode.children.push(rightNode);
-
-      // Set root to the last step's result
-      root = resultNode;
-    });
-
-    return root;
-  };
-
   return (
-    <div className="relative w-full overflow-x-auto">
-      <svg ref={svgRef} className="w-full h-full" />
+    <div className="relative w-full h-[600px]">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        defaultEdgeOptions={defaultEdgeOptions}
+        fitView
+        style={{ background: 'transparent' }}
+        proOptions={{ hideAttribution: true }}
+        minZoom={0.1}
+      >
+        <Background color="#aaa" gap={16} />
+      </ReactFlow>
       
       {/* Controls */}
       <div className="absolute top-2 sm:top-4 left-2 sm:left-4 flex items-center gap-1 sm:gap-2 bg-black/50 backdrop-blur-sm p-1.5 sm:p-2 rounded-xl shadow-lg z-10">
