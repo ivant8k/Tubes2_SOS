@@ -7,7 +7,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://your-railway-app-url.railway.app/:path*"
+      "destination": "https://alchemix-backend-production.up.railway.app/api/:path*"
     }
   ]
 } 
