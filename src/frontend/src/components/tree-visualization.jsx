@@ -121,7 +121,7 @@ const defaultEdgeOptions = {
   },
 };
 
-const SearchVisualization = ({ element, mode, solutionPath }) => {
+const TreeVisualization = ({ element, mode, solutionPath }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [currentStep, setCurrentStep] = useState(0);
@@ -552,4 +552,4 @@ const SearchVisualization = ({ element, mode, solutionPath }) => {
   );
 };
 
-export default SearchVisualization; 
+export default TreeVisualization; 

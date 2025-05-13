@@ -4,7 +4,7 @@ import React, { useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 
 // Dynamically import SearchVisualization with no SSR
-const SearchVisualization = dynamic(() => import('./SearchVisualization'), {
+const TreeVisualization = dynamic(() => import('./tree-visualization'), {
   ssr: false,
   loading: () => (
     <div className="w-full h-[600px] relative glass rounded-2xl shadow-xl overflow-hidden flex items-center justify-center">
@@ -250,7 +250,7 @@ const Search = () => {
       {searchElement && searchResult?.paths && (
         <div className="glass rounded-2xl p-4 sm:p-8 shadow-xl">
           <h2 className="text-xl sm:text-2xl font-bold mb-4 text-white">Visualization</h2>
-          <SearchVisualization 
+          <TreeVisualization 
             element={searchElement} 
             mode={searchMode} 
             solutionPath={searchResult.paths[selectedRecipeIndex] || []}

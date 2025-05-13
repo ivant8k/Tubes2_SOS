@@ -35,10 +35,7 @@ var DFSVisitedCount int
 var BidirectionalVisitedCount int
 var reverseMap map[string][]string
 
-// Fungsi LoadCombinations bertujuan untuk memuat data kombinasi dari file JSON
-// File berisi daftar kombinasi (Root, Left, Right, Tier) untuk setiap elemen
 func LoadCombinations(filename string) error {
-	// [BACA FILE] Membaca file JSON
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return err
@@ -46,22 +43,18 @@ func LoadCombinations(filename string) error {
 
 	var raw []Combination
 
-	// [UNMARSHAL] Memproses JSON menjadi slice of Combination
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 
-	// [INISIALISASI] Map untuk menyimpan kombinasi dan tier dari setiap elemen
 	combinations = make(map[string][]Combination)
 	tierMap = make(map[string]int)
-	reverseMap = make(map[string][]string)  // Map untuk bidirectional search
+	reverseMap = make(map[string][]string)
 
-	// [PERULANGAN] Memasukkan semua kombinasi ke dalam map
 	for _, c := range raw {
 		combinations[c.Root] = append(combinations[c.Root], c)
 		tierMap[c.Root] = c.Tier
 
-		// [REVERSE MAP] Menyimpan hubungan kebalikan untuk pencarian bidirectional
 		reverseMap[c.Left] = append(reverseMap[c.Left], c.Root)
 		reverseMap[c.Right] = append(reverseMap[c.Right], c.Root)
 	}
@@ -79,7 +72,6 @@ func isBasic(element string) bool {
 	return basics[element]
 }
 
-// Struktur RecipePath menyimpan jalur bahan untuk bidirectional search
 type RecipePath struct {
 	Left  string
 	Right string
@@ -106,7 +98,6 @@ func FindRecipeBFS(target string) *Node {
 	queue := []string{target}
 	BFSVisitedCount = 0
 
-	// First pass: collect all possible combinations
 	fmt.Println("\nFirst pass: Collecting combinations...")
 	for len(queue) > 0 {
 		current := queue[0]
@@ -124,9 +115,7 @@ func FindRecipeBFS(target string) *Node {
 			continue
 		}
 
-		// Add all possible combinations to the queue
 		for _, comb := range combinations[current] {
-			// Check if both ingredients are of lower tier than the target
 			if tierMap[comb.Left] < tierMap[current] && tierMap[comb.Right] < tierMap[current] {
 				fmt.Printf("  Checking combination: %s (tier %d) + %s (tier %d) = %s (tier %d)\n", 
 					comb.Left, tierMap[comb.Left], comb.Right, tierMap[comb.Right], comb.Root, comb.Tier)
@@ -145,7 +134,6 @@ func FindRecipeBFS(target string) *Node {
 		}
 	}
 
-	// Second pass: build recipes from basic elements up
 	fmt.Println("\nSecond pass: Building recipes...")
 	changed := true
 	for changed {
@@ -155,9 +143,7 @@ func FindRecipeBFS(target string) *Node {
 				continue
 			}
 
-			// Try all combinations for this element
 			for _, comb := range combinations[elem] {
-				// Check if both ingredients are of lower tier than the target
 				if tierMap[comb.Left] < tierMap[elem] && tierMap[comb.Right] < tierMap[elem] {
 					leftRecipe := recipeMap[comb.Left]
 					rightRecipe := recipeMap[comb.Right]
@@ -236,48 +222,39 @@ func FindMultipleRecipes(target string, maxCount int, algorithm string) []*Node 
 
 	atomic.StoreInt32(&MultiVisitedCount, 0)
 	var results []*Node
-	resultChan := make(chan *Node, maxCount*16) // Increased buffer size
+	resultChan := make(chan *Node, maxCount*16)
 	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, 300) // Increased concurrent searches
+	semaphore := make(chan struct{}, 300)
 	var seen sync.Map
 	validCombos := []Combination{}
 
 	targetTier := tierMap[target]
 	
-	// Filter and sort combinations by tier difference and complexity
 	for _, c := range combinations[target] {
 		if tierMap[c.Left] < targetTier && tierMap[c.Right] < targetTier {
-			// Calculate tier difference to prioritize combinations with ingredients closer to target tier
 			leftTierDiff := targetTier - tierMap[c.Left]
 			rightTierDiff := targetTier - tierMap[c.Right]
 			avgTierDiff := (leftTierDiff + rightTierDiff) / 2
 			
-			// Add tier difference information to the combination
 			c.Tier = avgTierDiff
 			validCombos = append(validCombos, c)
 		}
 	}
 
-	// Sort combinations by tier difference and complexity
 	sort.SliceStable(validCombos, func(i, j int) bool {
-		// First sort by tier difference (prefer combinations with ingredients closer to target tier)
 		if validCombos[i].Tier != validCombos[j].Tier {
 			return validCombos[i].Tier < validCombos[j].Tier
 		}
-		// Then sort by complexity
 		return len(validCombos[i].Left)+len(validCombos[i].Right) < len(validCombos[j].Left)+len(validCombos[j].Right)
 	})
 
-	// Create a context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second) // Increased timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 
-	// Function to explore a single combination
 	exploreCombination := func(c Combination) {
 		defer wg.Done()
 		defer func() { <-semaphore }()
 
-		// Try variations based on tier difference
 		variations := []struct {
 			left  string
 			right string
@@ -287,13 +264,11 @@ func FindMultipleRecipes(target string, maxCount int, algorithm string) []*Node 
 		}
 
 		for _, v := range variations {
-			// Try different combinations for both left and right sides
 			for _, leftComb := range combinations[target] {
 				if tierMap[leftComb.Left] < targetTier && tierMap[leftComb.Right] < targetTier {
 					visited := make(map[string]bool)
 					var left *Node
 					
-					// Use the specified algorithm to find the left ingredient
 					switch algorithm {
 					case "bfs":
 						left = FindRecipeBFS(v.left)
@@ -302,7 +277,6 @@ func FindMultipleRecipes(target string, maxCount int, algorithm string) []*Node 
 						left = FindRecipeDFS(v.left, visited)
 						atomic.AddInt32(&MultiVisitedCount, int32(GetDFSVisited()))
 					case "bidirectional":
-						// For bidirectional, we'll use the first basic element as start
 						left = FindRecipeBidirectional(v.left)
 						atomic.AddInt32(&MultiVisitedCount, int32(GetBidirectionalVisited()))
 					default:
@@ -318,7 +292,6 @@ func FindMultipleRecipes(target string, maxCount int, algorithm string) []*Node 
 							rightVisited := copyVisitedMap(visited)
 							var right *Node
 							
-							// Use the specified algorithm to find the right ingredient
 							switch algorithm {
 							case "bfs":
 								right = FindRecipeBFS(v.right)
@@ -327,7 +300,6 @@ func FindMultipleRecipes(target string, maxCount int, algorithm string) []*Node 
 								right = FindRecipeDFS(v.right, rightVisited)
 								atomic.AddInt32(&MultiVisitedCount, int32(GetDFSVisited()))
 							case "bidirectional":
-								// For bidirectional, we'll use the first basic element as start
 								right = FindRecipeBidirectional(v.right)
 								atomic.AddInt32(&MultiVisitedCount, int32(GetBidirectionalVisited()))
 							default:
@@ -338,7 +310,6 @@ func FindMultipleRecipes(target string, maxCount int, algorithm string) []*Node 
 								continue
 							}
 
-							// Try both variations of the tree
 							trees := []*Node{
 								{Element: target, Left: left, Right: right},
 								{Element: target, Left: right, Right: left},
@@ -361,7 +332,6 @@ func FindMultipleRecipes(target string, maxCount int, algorithm string) []*Node 
 		}
 	}
 
-	// Launch goroutines for each valid combination
 	for _, comb := range validCombos {
 		select {
 		case <-ctx.Done():
@@ -373,13 +343,11 @@ func FindMultipleRecipes(target string, maxCount int, algorithm string) []*Node 
 		}
 	}
 
-	// Close result channel when all goroutines are done
 	go func() {
 		wg.Wait()
 		close(resultChan)
 	}()
 
-	// Collect results with respect to maxCount
 	results = make([]*Node, 0, maxCount)
 	for recipe := range resultChan {
 		results = append(results, recipe)
@@ -389,7 +357,6 @@ func FindMultipleRecipes(target string, maxCount int, algorithm string) []*Node 
 		}
 	}
 
-	// If we found more recipes than requested, randomly select maxCount recipes
 	if len(results) > maxCount {
 		rand.Seed(time.Now().UnixNano())
 		rand.Shuffle(len(results), func(i, j int) {
@@ -417,7 +384,6 @@ func exploreRecipe(target string, visited map[string]bool, counter *int32, algor
 
 	targetTier := tierMap[target]
 
-	// Filter and sort combinations by tier difference
 	for _, comb := range combinations[target] {
 		if tierMap[comb.Left] < targetTier && tierMap[comb.Right] < targetTier {
 			leftTierDiff := targetTier - tierMap[comb.Left]
@@ -428,7 +394,6 @@ func exploreRecipe(target string, visited map[string]bool, counter *int32, algor
 		}
 	}
 
-	// Sort combinations by tier difference and complexity
 	sort.SliceStable(validCombos, func(i, j int) bool {
 		if validCombos[i].Tier != validCombos[j].Tier {
 			return validCombos[i].Tier < validCombos[j].Tier
@@ -436,7 +401,6 @@ func exploreRecipe(target string, visited map[string]bool, counter *int32, algor
 		return len(validCombos[i].Left)+len(validCombos[i].Right) < len(validCombos[j].Left)+len(validCombos[j].Right)
 	})
 
-	// Try all valid combinations
 	for _, comb := range validCombos {
 		variations := []struct {
 			left  string
@@ -450,14 +414,12 @@ func exploreRecipe(target string, visited map[string]bool, counter *int32, algor
 			leftVisited := copyVisitedMap(visited)
 			var left *Node
 			
-			// Use the specified algorithm to find the left ingredient
 			switch algorithm {
 			case "bfs":
 				left = FindRecipeBFS(v.left)
 			case "dfs":
 				left = FindRecipeDFS(v.left, leftVisited)
 			case "bidirectional":
-				// For bidirectional, we'll use the first basic element as start
 				left = FindRecipeBidirectional(v.left)
 			default:
 				left = exploreRecipe(v.left, leftVisited, counter, algorithm)
@@ -470,14 +432,12 @@ func exploreRecipe(target string, visited map[string]bool, counter *int32, algor
 			rightVisited := copyVisitedMap(visited)
 			var right *Node
 			
-			// Use the specified algorithm to find the right ingredient
 			switch algorithm {
 			case "bfs":
 				right = FindRecipeBFS(v.right)
 			case "dfs":
 				right = FindRecipeDFS(v.right, rightVisited)
 			case "bidirectional":
-				// For bidirectional, we'll use the first basic element as start
 				right = FindRecipeBidirectional(v.right)
 			default:
 				right = exploreRecipe(v.right, rightVisited, counter, algorithm)
@@ -498,7 +458,6 @@ func exploreRecipe(target string, visited map[string]bool, counter *int32, algor
 		return nil
 	}
 
-	// Return a random candidate to increase variety
 	rand.Seed(time.Now().UnixNano())
 	return candidates[rand.Intn(len(candidates))]
 }
@@ -514,12 +473,9 @@ func getSortedBasicElements() []string {
     return basics
 }
 
-// Fungsi FindRecipeBidirectional bertujuan mencari resep menggunakan pencarian dua arah (dari elemen dasar dan dari target)
-// Metode ini memungkinkan pencarian lebih cepat dengan mempertemukan dua pencarian di tengah
 func FindRecipeBidirectional(target string) *Node {
     fmt.Printf("\n=== Starting Bidirectional Search ===\n")
     fmt.Printf("Target: %s (Tier: %d)\n", target, tierMap[target])
-    // Use all basic elements as starting points
     basics := getSortedBasicElements()
     fmt.Printf("Start Elements: %v\n", basics)
 
@@ -532,7 +488,6 @@ func FindRecipeBidirectional(target string) *Node {
         return nil
     }
 
-    // Forward search (all basics → target)
     forwardVisited := make(map[string]*Node)
     forwardQueue := []string{}
     for _, b := range basics {
@@ -540,28 +495,22 @@ func FindRecipeBidirectional(target string) *Node {
         forwardQueue = append(forwardQueue, b)
     }
     
-    // Backward search (target → basic)
     backwardVisited := make(map[string]bool)
     backwardQueue := []string{target}
     backwardVisited[target] = true
     
-    BidirectionalVisitedCount = len(basics) + 1 // Start with all basics and target
+    BidirectionalVisitedCount = len(basics) + 1
     fmt.Printf("Initialized bidirectional search\n")
 
-    // Main search loop
     for len(forwardQueue) > 0 && len(backwardQueue) > 0 {
-        // Forward expansion
         currentForward := forwardQueue[0]
         forwardQueue = forwardQueue[1:]
         fmt.Printf("\nForward exploring from: %s (Tier: %d)\n", currentForward, tierMap[currentForward])
 
-        // Check if current forward node is in backward visited
         if backwardVisited[currentForward] {
             fmt.Printf("Found intersection at: %s\n", currentForward)
-            // Build path from start to intersection
             forwardPath := forwardVisited[currentForward]
             
-            // Find the combination that leads to the target
             for _, comb := range combinations[target] {
                 if comb.Left == currentForward || comb.Right == currentForward {
                     var otherElement string
@@ -571,7 +520,6 @@ func FindRecipeBidirectional(target string) *Node {
                         otherElement = comb.Left
                     }
                     
-                    // Try to find the other element in forward visited
                     if otherNode, exists := forwardVisited[otherElement]; exists {
                         return &Node{
                             Element: target,
@@ -583,7 +531,6 @@ func FindRecipeBidirectional(target string) *Node {
             }
         }
 
-        // Expand forward
         for _, comb := range combinations {
             for _, c := range comb {
                 if (c.Left == currentForward || c.Right == currentForward) &&
@@ -604,12 +551,10 @@ func FindRecipeBidirectional(target string) *Node {
             }
         }
 
-        // Backward expansion
         currentBackward := backwardQueue[0]
         backwardQueue = backwardQueue[1:]
         fmt.Printf("\nBackward exploring from: %s (Tier: %d)\n", currentBackward, tierMap[currentBackward])
 
-        // Expand backward
         for _, comb := range combinations {
             for _, c := range comb {
                 if c.Root == currentBackward {
@@ -740,16 +685,14 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 			Element string `json:"element"`
 			Tier    int    `json:"tier"`
 		} `json:"target"`
-		ExecutionTime float64 `json:"executionTime"` // in milliseconds
+		ExecutionTime float64 `json:"executionTime"`
 	}
 
-	// Set target information
 	response.Target.Element = element
 	response.Target.Tier = tierMap[element]
 
 	startTime := time.Now()
 
-	// Handle single recipe mode
 	if recipeMode == "single" {
 		switch mode {
 		case "bfs":
@@ -785,7 +728,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if recipeMode == "multiple" {
-		maxRecipes := 10 // Default value
+		maxRecipes := 10
 		if maxRecipesStr := r.URL.Query().Get("max_recipes"); maxRecipesStr != "" {
 			if parsed, err := strconv.Atoi(maxRecipesStr); err == nil && parsed > 0 {
 				maxRecipes = parsed
@@ -812,10 +755,8 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 	executionTime = time.Since(startTime)
 	response.ExecutionTime = float64(executionTime.Microseconds()) / 1000.0
 
-	// Set response headers
 	w.Header().Set("Content-Type", "application/json")
 
-	// Encode and send response
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		fmt.Printf("Error encoding response: %v\n", err)
 		http.Error(w, "Error encoding response", http.StatusInternalServerError)
@@ -838,16 +779,13 @@ func convertRecipeToPath(node *Node) []Step {
 		return nil
 	}
 
-	// If it's a leaf node (basic element), return empty
 	if node.Left == nil && node.Right == nil {
 		return nil
 	}
 
-	// Get paths for left and right subtrees
 	leftSteps := convertRecipeToPath(node.Left)
 	rightSteps := convertRecipeToPath(node.Right)
 
-	// Create the current step
 	currentStep := Step{
 		Ingredients: []string{node.Left.Element, node.Right.Element},
 		Result:      node.Element,
@@ -856,8 +794,6 @@ func convertRecipeToPath(node *Node) []Step {
 	currentStep.Tiers.Right = tierMap[node.Right.Element]
 	currentStep.Tiers.Result = tierMap[node.Element]
 
-	// Combine all steps in the correct order
-	// First add all steps from left subtree, then right subtree, then current step
 	steps := make([]Step, 0)
 	steps = append(steps, leftSteps...)
 	steps = append(steps, rightSteps...)
@@ -880,18 +816,15 @@ func handleMode(w http.ResponseWriter, r *http.Request) {
 func main() {
 	fmt.Println("Starting server...")
 	
-	// Load combinations from file
 	err := LoadCombinations("combinations.json")
 	if err != nil {
 		fmt.Printf("Error loading combinations: %v\n", err)
 		panic(err)
 	}
 
-	// Define HTTP handlers with CORS
 	http.HandleFunc("/search", enableCORS(handleSearch))
 	http.HandleFunc("/mode", enableCORS(handleMode))
 
-	// Start server
 	port := ":5000"
 	fmt.Printf("Server starting on port %s...\n", port)
 	if err := http.ListenAndServe(port, nil); err != nil {
