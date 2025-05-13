@@ -84,6 +84,22 @@ Proyek ini adalah solver untuk permainan *Little Alchemy 2*, yang bertujuan menc
 Proyek ini juga mendukung pencarian banyak resep (*multi-recipe*) dengan pendekatan *multithreading* menggunakan Go, dengan analisis efisiensi untuk elemen seperti *Obsidian* dan *Beach*. Aplikasi ini memiliki frontend (Next.js) dan backend (Go), yang dapat dijalankan menggunakan Docker.
 
 
+### Checklist Pencapaian
+
+| No | Poin                                                                 | Ya | Tidak |
+|----|----------------------------------------------------------------------|:--:|:-----:|
+| 1  | Aplikasi dapat dijalankan.                                           | ✅ |       |
+| 2  | Aplikasi dapat memperoleh data recipe melalui scraping.              | ✅ |       |
+| 3  | Algoritma Depth First Search dan Breadth First Search dapat menemukan recipe elemen dengan benar. | ✅ |       |
+| 4  | Aplikasi dapat menampilkan visualisasi recipe elemen yang dicari sesuai dengan spesifikasi. | ✅ |       |
+| 5  | Aplikasi mengimplementasikan multithreading.                        | ✅ |       |
+| 6  | Membuat laporan sesuai dengan spesifikasi.                          | ✅ |       |
+| 7  | Membuat bonus video dan diunggah pada Youtube.                      | ✅ |       |
+| 8  | Membuat bonus algoritma pencarian Bidirectional.                    | ✅ |       |
+| 9  | Membuat bonus Live Update.                                          | ✅ |       |
+| 10 | Aplikasi di-containerize dengan Docker.                             | ✅ |       |
+| 11 | Aplikasi di-deploy dan dapat diakses melalui internet.              | ✅ |       |
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 
