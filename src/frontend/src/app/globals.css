@@ -54,6 +54,17 @@ body {
   @apply bg-clip-text text-transparent bg-gradient-to-r from-blue-500 to-purple-500;
 }
 
+/* ReactFlow z-index fix */
+.react-flow__edges {
+  z-index: 0 !important;
+}
+.react-flow__nodes {
+  z-index: 1 !important;
+}
+.react-flow__controls, .react-flow__minimap {
+  z-index: 2 !important;
+}
+
 @layer components {
   .btn-primary {
     @apply px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors;
