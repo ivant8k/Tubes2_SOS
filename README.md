@@ -15,8 +15,6 @@
     <a href="https://github.com/ivant8k/Tubes2_SOS/issues">Request Feature</a>
     <br>
     <br>
-
-    [![MIT License][license-shield]][license-url]
   </p>
 </div>
 
