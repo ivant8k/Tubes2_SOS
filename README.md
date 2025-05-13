@@ -183,6 +183,9 @@ Proyek ini dilisensikan di bawah MIT License.
 <br>
 <h3 align="center">THANK YOU!</h3>
 
+
 <!-- MARKDOWN LINKS & IMAGES -->
-[license-shield]: https://img.shields.io/badge/License-MIT-yellow
-[license-url]: https://opensource.org/licenses/MIT
+<!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
+[issues-url]: https://github.com/NoHaitch/Tubes2_FE_Chibye/issues
+[license-shield]: https://img.shields.io/badge/License-Apache--2.0_license-yellow
+[license-url]: https://github.com/NoHaitch/Tubes2_FE_Chibye/blob/main/LICENSE
