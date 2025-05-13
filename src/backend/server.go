@@ -303,7 +303,7 @@ func FindMultipleRecipes(target string, maxCount int, algorithm string) []*Node 
 						atomic.AddInt32(&MultiVisitedCount, int32(GetDFSVisited()))
 					case "bidirectional":
 						// For bidirectional, we'll use the first basic element as start
-						left = FindRecipeBidirectional(v.left, "Earth")
+						left = FindRecipeBidirectional(v.left)
 						atomic.AddInt32(&MultiVisitedCount, int32(GetBidirectionalVisited()))
 					default:
 						left = exploreRecipe(v.left, visited, &MultiVisitedCount, algorithm)
@@ -328,7 +328,7 @@ func FindMultipleRecipes(target string, maxCount int, algorithm string) []*Node 
 								atomic.AddInt32(&MultiVisitedCount, int32(GetDFSVisited()))
 							case "bidirectional":
 								// For bidirectional, we'll use the first basic element as start
-								right = FindRecipeBidirectional(v.right, "Earth")
+								right = FindRecipeBidirectional(v.right)
 								atomic.AddInt32(&MultiVisitedCount, int32(GetBidirectionalVisited()))
 							default:
 								right = exploreRecipe(v.right, rightVisited, &MultiVisitedCount, algorithm)
@@ -458,7 +458,7 @@ func exploreRecipe(target string, visited map[string]bool, counter *int32, algor
 				left = FindRecipeDFS(v.left, leftVisited)
 			case "bidirectional":
 				// For bidirectional, we'll use the first basic element as start
-				left = FindRecipeBidirectional(v.left, "Earth")
+				left = FindRecipeBidirectional(v.left)
 			default:
 				left = exploreRecipe(v.left, leftVisited, counter, algorithm)
 			}
@@ -478,7 +478,7 @@ func exploreRecipe(target string, visited map[string]bool, counter *int32, algor
 				right = FindRecipeDFS(v.right, rightVisited)
 			case "bidirectional":
 				// For bidirectional, we'll use the first basic element as start
-				right = FindRecipeBidirectional(v.right, "Earth")
+				right = FindRecipeBidirectional(v.right)
 			default:
 				right = exploreRecipe(v.right, rightVisited, counter, algorithm)
 			}
@@ -516,10 +516,12 @@ func getSortedBasicElements() []string {
 
 // Fungsi FindRecipeBidirectional bertujuan mencari resep menggunakan pencarian dua arah (dari elemen dasar dan dari target)
 // Metode ini memungkinkan pencarian lebih cepat dengan mempertemukan dua pencarian di tengah
-func FindRecipeBidirectional(target string, startElement string) *Node {
+func FindRecipeBidirectional(target string) *Node {
     fmt.Printf("\n=== Starting Bidirectional Search ===\n")
     fmt.Printf("Target: %s (Tier: %d)\n", target, tierMap[target])
-    fmt.Printf("Start Element: %s (Tier: %d)\n", startElement, tierMap[startElement])
+    // Use all basic elements as starting points
+    basics := getSortedBasicElements()
+    fmt.Printf("Start Elements: %v\n", basics)
 
     if isBasic(target) {
         fmt.Printf("Target is a basic element, returning direct node\n")
@@ -529,22 +531,21 @@ func FindRecipeBidirectional(target string, startElement string) *Node {
         fmt.Printf("Target element not found in combinations\n")
         return nil
     }
-    if !isBasic(startElement) {
-        fmt.Printf("Start element is not a basic element\n")
-        return nil
-    }
 
-    // Forward search (start → target)
+    // Forward search (all basics → target)
     forwardVisited := make(map[string]*Node)
-    forwardQueue := []string{startElement}
-    forwardVisited[startElement] = &Node{Element: startElement}
+    forwardQueue := []string{}
+    for _, b := range basics {
+        forwardVisited[b] = &Node{Element: b}
+        forwardQueue = append(forwardQueue, b)
+    }
     
     // Backward search (target → basic)
     backwardVisited := make(map[string]bool)
     backwardQueue := []string{target}
     backwardVisited[target] = true
     
-    BidirectionalVisitedCount = 2 // Start with both elements
+    BidirectionalVisitedCount = len(basics) + 1 // Start with all basics and target
     fmt.Printf("Initialized bidirectional search\n")
 
     // Main search loop
@@ -559,13 +560,25 @@ func FindRecipeBidirectional(target string, startElement string) *Node {
             fmt.Printf("Found intersection at: %s\n", currentForward)
             // Build path from start to intersection
             forwardPath := forwardVisited[currentForward]
-            // Build path from intersection to target
-            backwardPath := buildBackwardPath(currentForward, target, backwardVisited)
-            if backwardPath != nil {
-                return &Node{
-                    Element: target,
-                    Left:   forwardPath,
-                    Right:  backwardPath,
+            
+            // Find the combination that leads to the target
+            for _, comb := range combinations[target] {
+                if comb.Left == currentForward || comb.Right == currentForward {
+                    var otherElement string
+                    if comb.Left == currentForward {
+                        otherElement = comb.Right
+                    } else {
+                        otherElement = comb.Left
+                    }
+                    
+                    // Try to find the other element in forward visited
+                    if otherNode, exists := forwardVisited[otherElement]; exists {
+                        return &Node{
+                            Element: target,
+                            Left:   forwardPath,
+                            Right:  otherNode,
+                        }
+                    }
                 }
             }
         }
@@ -596,125 +609,26 @@ func FindRecipeBidirectional(target string, startElement string) *Node {
         backwardQueue = backwardQueue[1:]
         fmt.Printf("\nBackward exploring from: %s (Tier: %d)\n", currentBackward, tierMap[currentBackward])
 
-        // Check if current backward node is in forward visited
-        if node, exists := forwardVisited[currentBackward]; exists {
-            fmt.Printf("Found intersection at: %s\n", currentBackward)
-            // Build path from start to intersection
-            forwardPath := node
-            // Build path from intersection to target
-            backwardPath := buildBackwardPath(currentBackward, target, backwardVisited)
-            if backwardPath != nil {
-                return &Node{
-                    Element: target,
-                    Left:   forwardPath,
-                    Right:  backwardPath,
-                }
-            }
-        }
-
         // Expand backward
-        for _, comb := range combinations[currentBackward] {
-            for _, ingredient := range []string{comb.Left, comb.Right} {
-                if !backwardVisited[ingredient] && tierMap[ingredient] < tierMap[currentBackward] {
-                    fmt.Printf("  Backward found ingredient: %s\n", ingredient)
-                    backwardVisited[ingredient] = true
-                    backwardQueue = append(backwardQueue, ingredient)
-                    BidirectionalVisitedCount++
-                }
-            }
-        }
-    }
-
-    fmt.Printf("\nNo recipe found from %s to %s\n", startElement, target)
-    return nil
-}
-
-func buildBackwardPath(from, to string, visited map[string]bool) *Node {
-    if from == to {
-        return &Node{Element: to}
-    }
-
-    // Try to find a valid combination that leads to the target
-    for _, comb := range combinations[to] {
-        if visited[comb.Left] && visited[comb.Right] &&
-           tierMap[comb.Left] < tierMap[to] && tierMap[comb.Right] < tierMap[to] {
-            leftNode := buildBackwardPath(from, comb.Left, visited)
-            rightNode := buildBackwardPath(from, comb.Right, visited)
-            if leftNode != nil && rightNode != nil {
-                return &Node{
-                    Element: to,
-                    Left:   leftNode,
-                    Right:  rightNode,
-                }
-            }
-        }
-    }
-
-    return nil
-}
-
-func expandForwardBuild(queue []string, visited map[string]*Node, otherVisited map[string]bool, intersection *string) ([]string, bool) {
-    next := []string{}
-    sort.Strings(queue)
-
-    for _, current := range queue {
-        // Find all combinations where current is one of the components
-        for root, combList := range combinations {
-            if _, exists := visited[root]; exists {
-                continue
-            }
-
-            for _, comb := range combList {
-                // Ensure tier is valid and current is involved in this combination
-                if (comb.Left == current || comb.Right == current) &&
-                   tierMap[comb.Left] < tierMap[root] && 
-                   tierMap[comb.Right] < tierMap[root] {
-                    
-                    leftNode, leftExists := visited[comb.Left]
-                    rightNode, rightExists := visited[comb.Right]
-                    
-                    if leftExists && rightExists {
-                        visited[root] = &Node{
-                            Element: root,
-                            Left:    leftNode,
-                            Right:   rightNode,
-                        }
-                        next = append(next, root)
+        for _, comb := range combinations {
+            for _, c := range comb {
+                if c.Root == currentBackward {
+                    if !backwardVisited[c.Left] {
+                        backwardVisited[c.Left] = true
+                        backwardQueue = append(backwardQueue, c.Left)
                         BidirectionalVisitedCount++
-
-                        if otherVisited[root] {
-                            *intersection = root
-                            return nil, true
-                        }
+                    }
+                    if !backwardVisited[c.Right] {
+                        backwardVisited[c.Right] = true
+                        backwardQueue = append(backwardQueue, c.Right)
+                        BidirectionalVisitedCount++
                     }
                 }
             }
         }
     }
-    return next, false
-}
 
-func expandBackwardTrack(queue []string, visited map[string]bool, otherVisited map[string]*Node, intersection *string) ([]string, bool) {
-    next := []string{}
-    sort.Strings(queue)
-
-    for _, current := range queue {
-        for _, comb := range combinations[current] {
-            for _, ingredient := range []string{comb.Left, comb.Right} {
-                if !visited[ingredient] && tierMap[ingredient] < tierMap[current] {
-                    visited[ingredient] = true
-                    next = append(next, ingredient)
-                    BidirectionalVisitedCount++
-
-                    if _, exists := otherVisited[ingredient]; exists {
-                        *intersection = ingredient
-                        return nil, true
-                    }
-                }
-            }
-        }
-    }
-    return next, false
+    return nil
 }
 
 func copyVisitedMap(original map[string]bool) map[string]bool {
@@ -857,17 +771,7 @@ func handleSearch(w http.ResponseWriter, r *http.Request) {
 				response.Paths = [][]Step{path}
 			}
 		case "bidirectional":
-			startElement := r.URL.Query().Get("start_element")
-			if startElement == "" {
-				// If no start element is provided, use the first basic element
-				startElement = "Earth"
-			}
-			// Check if start element is the same as target element
-			if startElement == element {
-				http.Error(w, "The target element can't be the same as the starting element", http.StatusBadRequest)
-				return
-			}
-			result = FindRecipeBidirectional(element, startElement)
+			result = FindRecipeBidirectional(element)
 			visited = BidirectionalVisitedCount
 			if result != nil {
 				path := convertRecipeToPath(result)
